@@ -164,7 +164,8 @@ def _print(report) -> None:
         o, c = report.overall, report.config
         covs = [str(x) for x in c.covariates]
         typer.echo(
-            f"\nChronos-2 {report.test_start} -> {report.test_end}: {report.issues} daily issues, "
+            f"\nChronos-2 {report.test_start} -> {report.test_end}: {report.issues} issues "
+            f"(every {c.issue_every_intervals} intervals), "
             f"covariates {covs}, weather {c.weather.model}"
         )
         typer.echo(
