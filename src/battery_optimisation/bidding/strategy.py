@@ -283,6 +283,7 @@ class WaterValueStrategy:
             Battery(self.battery, start),
             self.market,
             soc_terminal_min=self.battery.soc_init,
+            firm_reserves=True,  # energy is bid, not scheduled: no reliance on charging
         ).schedule
         m, b = self.market, self.battery
         rows = plan.select(Col.INTERVAL_START, *AWARD_COLUMN.values()).iter_rows(named=True)
@@ -300,6 +301,11 @@ class WaterValueStrategy:
             soc_low=b.soc_min + np.asarray(raise_e) / b.eta_d,
             soc_high=b.soc_max - np.asarray(lower_e) * b.eta_c,
         )
+
+    @property
+    def planned_awards(self) -> dict[datetime, dict[Product, float]]:
+        """Reserve plan per interval (latest issue's), before feasibility scaling."""
+        return self._plan_awards
 
     def _ancillary_prices(self, known, end: datetime) -> pl.DataFrame:
         if self.ancillary_forecaster is not None:
@@ -451,6 +457,12 @@ class WaterValueStrategy:
         lower_mw = sum(awards[p] for p in LOWER_PRODUCTS)
         raise_e = sum(awards[p] * m.sustain_h(p) for p in RAISE_PRODUCTS)
         lower_e = sum(awards[p] * m.sustain_h(p) for p in LOWER_PRODUCTS)
+        # the SOC at the end of this interval is the start of the next: keep what its planned
+        # reserves need too, so energy here does not crowd them out
+        following = self._plan_awards.get(offers.interval_start + timedelta(hours=dt))
+        if following:
+            raise_e = max(raise_e, sum(following[p] * m.sustain_h(p) for p in RAISE_PRODUCTS))
+            lower_e = max(lower_e, sum(following[p] * m.sustain_h(p) for p in LOWER_PRODUCTS))
         energy = caps_from_bounds(
             offers,
             low - raise_e / b.eta_d,

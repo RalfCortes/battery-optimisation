@@ -321,3 +321,35 @@ def test_water_value_reserve_plan_uses_the_given_ancillary_forecaster(
     dispatch = Simulator(Market(market_cfg, window, history), Battery(battery_cfg)).run(strategy)
     assert Spy.calls > 0
     assert dispatch.total().ancillary_sgd > 0
+
+
+def test_energy_bids_do_not_crowd_out_planned_reserves(battery_cfg, market_cfg) -> None:
+    """Energy curves at t keep the SOC the next interval's planned reserves need, so reserves are
+    offered as planned (only plan changes between issues may scale them)."""
+    from battery_optimisation.config import Product
+    from battery_optimisation.sim.clearing import AWARD_COLUMN, price_column
+
+    rng = np.random.default_rng(0)
+    base = make_prices(daily_shape(DAYS + 1, seed=4))
+    prices = base.with_columns(
+        pl.Series(price_column(Product.REGULATION, market_cfg), rng.uniform(15, 35, base.height)),
+        pl.Series(
+            price_column(Product.PRIMARY_RESERVE, market_cfg), rng.uniform(5, 15, base.height)
+        ),
+        pl.Series(
+            price_column(Product.CONTINGENCY_RESERVE, market_cfg), rng.uniform(10, 30, base.height)
+        ),
+    )
+    history, window = prices.slice(0, 48), prices.slice(48)
+    scen = scenario_frame(
+        window.select(Col.INTERVAL_START, Col.USEP),
+        n=10,
+        noise=40.0,
+        gap=market_cfg.gate_closure_intervals,
+        seed=2,
+    )
+    strategy = WaterValueStrategy(scen, battery_cfg, market_cfg, load_bidding(), ancillary=True)
+    dispatch = Simulator(Market(market_cfg, window, history), Battery(battery_cfg)).run(strategy)
+    planned = sum(sum(a.values()) for a in strategy.planned_awards.values())
+    awarded = dispatch.frame.select(sum(pl.col(c) for c in AWARD_COLUMN.values())).to_series().sum()
+    assert awarded >= 0.97 * planned

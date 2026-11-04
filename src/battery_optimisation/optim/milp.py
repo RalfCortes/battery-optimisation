@@ -51,6 +51,7 @@ def solve_schedule(
     market: MarketConfig,
     soc_terminal_min: float | None = None,
     terminal_value: float = 0.0,
+    firm_reserves: bool = False,
 ) -> MilpSolution:
     """Optimal schedule for ``prices`` (``Col.INTERVAL_START``, ``Col.USEP`` and, when present,
     the ancillary price columns of the enabled products), starting from ``battery.soc_mwh``.
@@ -61,6 +62,8 @@ def solve_schedule(
       sustain:       SOC at the start and end of the interval - soc_min >= sum_p r_p h_p / eta_d
                      soc_max - SOC >= r_reg h_reg eta_c
       wear:          kappa x regulation_utilisation x r_reg x dt
+    ``firm_reserves``: reserves must not rely on the opposite energy flow (when the energy part
+    is bid, not scheduled): raise: d + sum_p r_p <= P, lower: c + r_reg <= P.
     """
     check_prices(prices, market)
     products = [p for p in market.ancillary_products if price_column(p, market) in prices.columns]
@@ -102,9 +105,15 @@ def solve_schedule(
         raises = [p for p in products if p in RAISE_PRODUCTS]
         lowers = [p for p in products if p in LOWER_PRODUCTS]
         raise_mw = sum((r[p] for p in raises), start=0 * d)
-        h.addConstrs(d - c + raise_mw <= p_max)
-        if lowers:
-            h.addConstrs(c - d + sum((r[p] for p in lowers), start=0 * c) <= p_max)
+        lower_mw = sum((r[p] for p in lowers), start=0 * c)
+        if firm_reserves:
+            h.addConstrs(d + raise_mw <= p_max)
+            if lowers:
+                h.addConstrs(c + lower_mw <= p_max)
+        else:
+            h.addConstrs(d - c + raise_mw <= p_max)
+            if lowers:
+                h.addConstrs(c - d + lower_mw <= p_max)
         raise_energy = sum((r[p] * (market.sustain_h(p) / cfg.eta_d) for p in raises), start=0 * d)
         lower_energy = sum((r[p] * (market.sustain_h(p) * cfg.eta_c) for p in lowers), start=0 * d)
         h.addConstrs(s - raise_energy >= cfg.soc_min)  # end of each interval

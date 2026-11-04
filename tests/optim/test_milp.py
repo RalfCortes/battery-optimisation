@@ -61,3 +61,25 @@ def test_milp_cooptimises_ancillary_services(battery_cfg, market_cfg) -> None:
     assert raise_mw.max() <= p + 1e-6
     assert (s[Col.CHARGE_MW] - s[Col.DISCHARGE_MW] + s[Col.REG_MW]).max() <= p + 1e-6
     assert s[Col.CON_MW].sum() > 0  # the best-paid reserve is used
+
+
+def test_firm_reserves_do_not_rely_on_the_opposite_energy_flow(battery_cfg, market_cfg) -> None:
+    """Without firm reserves, charging frees power for more than P of raise reserves; firm
+    reserves fit beside the energy flow itself: raise + discharge <= P, lower + charge <= P."""
+    from battery_optimisation.config import Product
+    from battery_optimisation.sim.clearing import price_column
+
+    energy = make_prices(np.array([-50.0] * 24 + [300.0] * 24))  # charge early, sell late
+    prices = energy.with_columns(
+        pl.lit(40.0).alias(price_column(Product.REGULATION, market_cfg)),
+        pl.lit(40.0).alias(price_column(Product.PRIMARY_RESERVE, market_cfg)),
+        pl.lit(40.0).alias(price_column(Product.CONTINGENCY_RESERVE, market_cfg)),
+    )
+    b, p = Battery(battery_cfg), battery_cfg.p_max_mw
+    loose = solve_schedule(prices, b, market_cfg).schedule
+    raise_loose = loose[Col.REG_MW] + loose[Col.PRI_MW] + loose[Col.CON_MW]
+    assert raise_loose.max() > p + 1e-6  # relies on charging
+    s = solve_schedule(prices, b, market_cfg, firm_reserves=True).schedule
+    raise_mw = s[Col.REG_MW] + s[Col.PRI_MW] + s[Col.CON_MW]
+    assert (raise_mw + s[Col.DISCHARGE_MW]).max() <= p + 1e-6
+    assert (s[Col.REG_MW] + s[Col.CHARGE_MW]).max() <= p + 1e-6
