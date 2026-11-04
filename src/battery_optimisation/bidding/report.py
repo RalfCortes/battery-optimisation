@@ -24,9 +24,9 @@ from battery_optimisation.columns import Col
 from battery_optimisation.config import BatteryConfig, BiddingConfig, FeasibilityMode, MarketConfig
 from battery_optimisation.data.nems import TZ
 from battery_optimisation.forecast.base import Forecaster
-from battery_optimisation.forecast.baselines import WithAncillaryPersistence
+from battery_optimisation.forecast.baselines import WithAncillary, WithAncillaryPersistence
 from battery_optimisation.forecast.perfect import PerfectForecaster
-from battery_optimisation.forecast.stored import QuantileForecaster
+from battery_optimisation.forecast.stored import AncillaryQuantileForecaster, QuantileForecaster
 from battery_optimisation.sim.backtest import RunSummary, StrategyName, run_strategy, save_run
 from battery_optimisation.sim.clearing import Side
 from battery_optimisation.sim.dispatch import Dispatch
@@ -102,18 +102,27 @@ def evaluate_bidding(
     horizon: Horizon = Horizon.DAY,
     history: pl.DataFrame | None = None,
     ancillary: bool = False,
+    ancillary_quantiles: pl.DataFrame | None = None,
 ) -> BiddingEvaluation:
     """Perfect foresight, self-schedule and water value over ``realised``'s window, all planned
     with ``horizon`` (DAY for daily forecasts, ROLLING for intraday ones)."""
     keep = [Col.INTERVAL_START, Col.USEP]
-    if ancillary:  # realised ancillary prices are traded; forecasts use persistence for them
+    # realised ancillary prices are traded; forecast by stored quantiles (else persistence)
+    if ancillary:
         keep += [c for c in realised.columns if c not in keep]
     prices = realised.select(keep).sort(Col.INTERVAL_START)
     days = horizon
-    water_value = WaterValueStrategy(scenarios, battery, market, bidding, ancillary=ancillary)
+    stored = (
+        AncillaryQuantileForecaster(ancillary_quantiles)
+        if ancillary and ancillary_quantiles is not None
+        else None
+    )
+    water_value = WaterValueStrategy(
+        scenarios, battery, market, bidding, ancillary=ancillary, ancillary_forecaster=stored
+    )
     median: Forecaster = QuantileForecaster(quantiles, level=0.5)
     if ancillary:
-        median = WithAncillaryPersistence(median)
+        median = WithAncillary(median, stored) if stored else WithAncillaryPersistence(median)
     strategies = {
         StrategyName.PERFECT_FORESIGHT: ScheduleStrategy(
             PerfectForecaster(prices), battery, market, days

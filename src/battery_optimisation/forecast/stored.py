@@ -30,6 +30,7 @@ class QuantileForecaster:
         self._issues = sorted(self._by_issue)
 
     def forecast(self, view: MarketView, end: datetime) -> pl.DataFrame:
+        """``Col.USEP`` = the forecast value (whatever the target)."""
         i = bisect.bisect_right(self._issues, view.decided_at)
         if i == 0:
             raise ValueError(f"no forecast issued at or before {view.decided_at}")
@@ -38,4 +39,24 @@ class QuantileForecaster:
         expected = int((end - view.now) / timedelta(minutes=30)) + 1
         if out.height != expected:
             raise ValueError(f"no forecast issued {issued} covering {view.now}..{end}")
+        return out
+
+
+class AncillaryQuantileForecaster:
+    """Stored ancillary price forecasts (``Col.TARGET`` = price column): one column per target,
+    from the latest issue at or before the decision time."""
+
+    def __init__(self, quantiles: pl.DataFrame, level: float = 0.5) -> None:
+        self._by_target = {
+            key[0]: QuantileForecaster(part, level)
+            for key, part in quantiles.partition_by(Col.TARGET, as_dict=True).items()
+        }
+
+    def forecast(self, view: MarketView, end: datetime) -> pl.DataFrame:
+        out = None
+        for target, f in self._by_target.items():
+            part = f.forecast(view, end).rename({Col.USEP: target})
+            out = part if out is None else out.join(part, on=Col.INTERVAL_START, how="left")
+        if out is None:
+            raise ValueError("no ancillary forecasts")
         return out

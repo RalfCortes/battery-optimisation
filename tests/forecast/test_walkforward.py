@@ -4,7 +4,7 @@ import numpy as np
 import polars as pl
 import pytest
 from synthetic import make_prices
-from synthetic_forecast import at, normal_quantiles, quantile_frame
+from synthetic_forecast import at, make_features, normal_quantiles, quantile_frame
 
 from battery_optimisation.columns import Col
 from battery_optimisation.config import load_forecast
@@ -146,3 +146,25 @@ def test_strategy_horizon_follows_the_forecast_cadence() -> None:
     assert schedule_horizon(CFG, market) is Horizon.ROLLING  # re-forecast at every gate closure
     daily = CFG.model_copy(update={"issue_every_intervals": 48})
     assert schedule_horizon(daily, market) is Horizon.DAY
+
+
+def test_ancillary_quantiles_forecast_each_enabled_product() -> None:
+    from battery_optimisation.config import load_market
+    from battery_optimisation.sim.clearing import price_column
+
+    market = load_market()
+    cols = [price_column(p, market) for p in market.ancillary_products]
+    features = make_features(3).with_columns(pl.lit(1.0).alias(c) for c in cols)
+
+    class FakeModel:
+        targets: list[str] = []
+
+        def forecast_quantiles(self, features, issues, weather=None, target=Col.USEP):
+            assert target in features.columns
+            FakeModel.targets.append(target)
+            return pl.DataFrame({Col.ISSUED_AT: issues, Col.USEP_FORECAST: [1.0] * len(issues)})
+
+    issues = [at(date(2026, 1, 2))]
+    out = walkforward.ancillary_quantiles(FakeModel(), features, issues, None, market)
+    assert FakeModel.targets == cols
+    assert out[Col.TARGET].to_list() == cols

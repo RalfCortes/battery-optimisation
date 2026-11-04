@@ -93,7 +93,11 @@ def run(
         horizon,
         history=history,
         ancillary=ancillary,
+        ancillary_quantiles=fr.ancillary_quantiles,
     )
+    if ancillary:
+        source = "Chronos-2" if fr.ancillary_quantiles is not None else "persistence"
+        typer.echo(f"Ancillary prices forecast by {source}")
     grid = np.asarray(bidding.sweep.prices)
     stats, per_interval = sweep(ev.water_value, grid)
     steps = sweep_breakdown(ev.water_value, grid)

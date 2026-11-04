@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import polars as pl
 
 from battery_optimisation.columns import Col
+from battery_optimisation.forecast.base import Forecaster
 from battery_optimisation.sim.clearing import MarketView
 
 
@@ -41,14 +42,22 @@ class PersistenceForecaster:
         return out
 
 
-class WithAncillaryPersistence:
-    """Energy from ``energy`` (e.g. the Chronos median), ancillary prices by persistence:
-    ancillary prices are not forecast yet."""
+class WithAncillary:
+    """Energy price from ``energy`` (e.g. the Chronos median), ancillary prices from
+    ``ancillary`` (stored Chronos forecasts, persistence, ...)."""
 
-    def __init__(self, energy) -> None:
-        self.energy = energy
+    def __init__(self, energy: Forecaster, ancillary: Forecaster) -> None:
+        self.energy, self.ancillary = energy, ancillary
 
     def forecast(self, view: MarketView, end: datetime) -> pl.DataFrame:
         energy = self.energy.forecast(view, end).select(Col.INTERVAL_START, Col.USEP)
-        ancillary = PersistenceForecaster().forecast(view, end).drop(Col.USEP)
+        ancillary = self.ancillary.forecast(view, end)
+        ancillary = ancillary.drop([c for c in (Col.USEP,) if c in ancillary.columns])
         return energy.join(ancillary, on=Col.INTERVAL_START, how="left")
+
+
+class WithAncillaryPersistence(WithAncillary):
+    """Energy from ``energy``, ancillary prices by persistence."""
+
+    def __init__(self, energy: Forecaster) -> None:
+        super().__init__(energy, PersistenceForecaster())

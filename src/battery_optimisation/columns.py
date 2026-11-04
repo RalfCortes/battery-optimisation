@@ -87,7 +87,8 @@ class Col(StrEnum):
     # Forecasts (long format: one row per issue time x interval x quantile)
     ISSUED_AT = "issued_at"  # when the forecast was made; uses data strictly before it
     QUANTILE = "quantile"  # quantile level in (0, 1)
-    USEP_FORECAST = "usep_forecast"  # SGD/MWh
+    USEP_FORECAST = "usep_forecast"  # SGD/MWh (the forecast value, whatever the target)
+    TARGET = "target"  # forecast price column (ancillary quantile frames)
     SCENARIO = "scenario"  # scenario id 0..K-1
     WEIGHT = "weight"  # scenario probability
 

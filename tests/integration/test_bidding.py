@@ -280,3 +280,44 @@ def test_water_value_with_ancillary_services(battery_cfg, market_cfg) -> None:
     dispatch = run_hist(both)
     assert dispatch.total().ancillary_sgd > 0
     assert dispatch.profit_sgd > energy_only.profit_sgd
+
+
+def test_water_value_reserve_plan_uses_the_given_ancillary_forecaster(
+    battery_cfg, market_cfg
+) -> None:
+    from battery_optimisation.config import Product
+    from battery_optimisation.forecast.perfect import PerfectForecaster
+    from battery_optimisation.sim.clearing import price_column
+
+    base = make_prices(daily_shape(DAYS + 1, seed=4))
+    prices = base.with_columns(
+        pl.lit(25.0).alias(price_column(Product.REGULATION, market_cfg)),
+        pl.lit(10.0).alias(price_column(Product.PRIMARY_RESERVE, market_cfg)),
+        pl.lit(20.0).alias(price_column(Product.CONTINGENCY_RESERVE, market_cfg)),
+    )
+    history, window = prices.slice(0, 48), prices.slice(48)
+    scen = scenario_frame(
+        window.select(Col.INTERVAL_START, Col.USEP),
+        n=5,
+        noise=40.0,
+        gap=market_cfg.gate_closure_intervals,
+        seed=2,
+    )
+
+    class Spy:
+        calls = 0
+
+        def __init__(self, inner):
+            self.inner = inner
+
+        def forecast(self, view, end):
+            Spy.calls += 1
+            return self.inner.forecast(view, end)
+
+    spy = Spy(PerfectForecaster(prices))
+    strategy = WaterValueStrategy(
+        scen, battery_cfg, market_cfg, load_bidding(), ancillary=True, ancillary_forecaster=spy
+    )
+    dispatch = Simulator(Market(market_cfg, window, history), Battery(battery_cfg)).run(strategy)
+    assert Spy.calls > 0
+    assert dispatch.total().ancillary_sgd > 0

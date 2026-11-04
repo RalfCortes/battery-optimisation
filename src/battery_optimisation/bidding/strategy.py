@@ -190,9 +190,13 @@ class WaterValueStrategy:
         market: MarketConfig,
         bidding: BiddingConfig,
         ancillary: bool = False,
+        ancillary_forecaster: Forecaster | None = None,
     ) -> None:
         self.battery, self.market, self.bidding = battery, market, bidding
         self.ancillary = ancillary  # commit ancillary services from a plan, energy in the rest
+        # ancillary prices for the reserve plan (default: persistence)
+        self.ancillary_forecaster = ancillary_forecaster
+        self.ancillary_fallbacks = 0  # issues where it had no forecast: persistence used
         self._plan_awards: dict[datetime, dict[Product, float]] = {}  # target -> planned MW
         ordered = scenarios.sort(Col.ISSUED_AT, Col.SCENARIO, Col.INTERVAL_START)
         self._scenarios = ordered
@@ -261,12 +265,12 @@ class WaterValueStrategy:
         self, issue: datetime, view: MarketView, soc_mwh: float
     ) -> StageLimits | None:
         """Ancillary awards over the issue's horizon from a MILP on the scenarios' mean energy
-        price and persistence ancillary prices; the per-stage limits they leave to energy."""
+        price and forecast ancillary prices; the per-stage limits they leave to energy."""
         if not self.ancillary:
             return None
         stamps, prices, weights = self._load_issue(issue)
         known = SimpleNamespace(now=stamps[0], decided_at=view.decided_at, history=view.history)
-        ancillary = PersistenceForecaster(strict=False).forecast(known, stamps[-1]).drop(Col.USEP)
+        ancillary = self._ancillary_prices(known, stamps[-1])
         if not any(c in ancillary.columns for c in AWARD_PRICE_COLUMNS(self.market)):
             return None
         plan_prices = pl.DataFrame({Col.INTERVAL_START: stamps, Col.USEP: prices @ weights})
@@ -296,6 +300,15 @@ class WaterValueStrategy:
             soc_low=b.soc_min + np.asarray(raise_e) / b.eta_d,
             soc_high=b.soc_max - np.asarray(lower_e) * b.eta_c,
         )
+
+    def _ancillary_prices(self, known, end: datetime) -> pl.DataFrame:
+        if self.ancillary_forecaster is not None:
+            try:
+                out = self.ancillary_forecaster.forecast(known, end)
+                return out.drop([c for c in (Col.USEP,) if c in out.columns])
+            except ValueError:
+                self.ancillary_fallbacks += 1
+        return PersistenceForecaster(strict=False).forecast(known, end).drop(Col.USEP)
 
     def _value_function(
         self, issue: datetime, stage: int, soc_mwh: float, view: MarketView | None = None

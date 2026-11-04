@@ -111,3 +111,18 @@ def test_forecast_run_round_trip(report_and_runs, tmp_path) -> None:
     assert set(run.backtests) == set(report_and_runs.runs)
     summary, dispatch = run.backtests[(StrategyName.CHRONOS_MEDIAN, Horizon.DAY)]
     assert dispatch.height == TEST_DAYS * 48
+
+
+def test_forecast_run_keeps_ancillary_quantiles(report_and_runs, tmp_path) -> None:
+    from battery_optimisation.forecast.report import (
+        load_forecast_run,
+        save_ancillary_quantiles,
+        save_forecast_run,
+    )
+
+    qf = pl.DataFrame({Col.ISSUED_AT: [], Col.QUANTILE: []})
+    run_dir = save_forecast_run(report_and_runs, qf, tmp_path / "forecast_x")
+    assert load_forecast_run(run_dir).ancillary_quantiles is None
+    aq = pl.DataFrame({Col.TARGET: ["regulation"], Col.QUANTILE: [0.5]})
+    save_ancillary_quantiles(aq, run_dir)
+    assert load_forecast_run(run_dir).ancillary_quantiles.equals(aq)

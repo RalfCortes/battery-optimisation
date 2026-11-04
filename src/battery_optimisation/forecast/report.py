@@ -212,6 +212,7 @@ class ForecastRunFiles(StrEnum):
     REPORT = "report.json"
     QUANTILES = "quantiles.parquet"
     SCENARIOS = "scenarios.parquet"
+    ANCILLARY_QUANTILES = "ancillary_quantiles.parquet"  # optional: Col.TARGET = price column
     BACKTESTS = "backtests"  # one backtest run folder per (strategy, horizon)
 
 
@@ -222,6 +223,7 @@ class ForecastRun:
     quantiles: pl.DataFrame
     scenarios: pl.DataFrame
     backtests: dict[RunKey, tuple[RunSummary, pl.DataFrame]]
+    ancillary_quantiles: pl.DataFrame | None = None
 
 
 def save_forecast_run(
@@ -250,7 +252,19 @@ def load_forecast_run(run_dir: Path) -> ForecastRun:
         quantiles=pl.read_parquet(run_dir / ForecastRunFiles.QUANTILES),
         scenarios=pl.read_parquet(run_dir / ForecastRunFiles.SCENARIOS),
         backtests=backtests,
+        ancillary_quantiles=(
+            pl.read_parquet(aq)
+            if (aq := run_dir / ForecastRunFiles.ANCILLARY_QUANTILES).exists()
+            else None
+        ),
     )
+
+
+def save_ancillary_quantiles(quantiles: pl.DataFrame, run_dir: Path) -> Path:
+    """Add ancillary price forecasts to an existing forecast run."""
+    path = Path(run_dir) / ForecastRunFiles.ANCILLARY_QUANTILES
+    quantiles.write_parquet(path)
+    return path
 
 
 def list_forecast_runs(runs_dir: Path = DEFAULT_RUNS_DIR) -> list[Path]:

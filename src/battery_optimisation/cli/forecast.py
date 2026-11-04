@@ -27,9 +27,17 @@ from battery_optimisation.config import (
 from battery_optimisation.data.nems import NemsSeries, load_nems
 from battery_optimisation.forecast import walkforward
 from battery_optimisation.forecast.chronos import ChronosModel
-from battery_optimisation.forecast.report import evaluate, save_forecast_run
+from battery_optimisation.forecast.report import (
+    DEFAULT_RUNS_DIR,
+    evaluate,
+    list_forecast_runs,
+    load_forecast_run,
+    save_ancillary_quantiles,
+    save_forecast_run,
+)
 from battery_optimisation.logs import configure_logging
 from battery_optimisation.sim import backtest
+from battery_optimisation.sim.clearing import price_column
 
 app = typer.Typer(
     help="Chronos-2 forecasts, scenarios, evaluation.",
@@ -96,6 +104,40 @@ def run(
 
     _print(report)
     typer.echo(f"\nSaved to {run_dir}")
+
+
+@app.command()
+def ancillary(
+    forecast_run: Annotated[
+        Path | None, typer.Option(help="Forecast run folder; default: the latest.")
+    ] = None,
+    runs_dir: Annotated[Path, typer.Option(help="Where forecast runs live.")] = DEFAULT_RUNS_DIR,
+) -> None:
+    """Add Chronos-2 forecasts of the ancillary prices to a forecast run (same issues and
+    covariates as its USEP forecasts); ``bidding run --ancillary`` then uses them."""
+    configure_logging()
+    run_dir = forecast_run or list_forecast_runs(runs_dir)[0]
+    fr = load_forecast_run(run_dir)
+    cfg, market = fr.report.config, load_market()
+    start, end = fr.report.test_start, fr.report.test_end
+    features, trajectories, _ = walkforward.build_features(start, end, cfg)
+    cols = [price_column(p, market) for p in market.ancillary_products]
+    first = features[Col.INTERVAL_START].min().date()
+    prices = backtest.load_prices(first, end + timedelta(days=2), market, ancillary=True)
+    features = features.join(
+        prices.select(Col.INTERVAL_START, *cols), on=Col.INTERVAL_START, how="left"
+    ).with_columns(pl.col(c).fill_null(strategy="forward") for c in cols)
+    issues = walkforward.issue_times(start, end, cfg)
+    aq = walkforward.ancillary_quantiles(ChronosModel(cfg), features, issues, trajectories, market)
+    path = save_ancillary_quantiles(aq, run_dir)
+    median = aq.filter((pl.col(Col.QUANTILE) - 0.5).abs() < 1e-9).join(
+        prices, on=Col.INTERVAL_START
+    )
+    for c in cols:
+        part = median.filter(pl.col(Col.TARGET) == str(c))
+        mae = (part[Col.USEP_FORECAST] - part[c]).abs().mean()
+        typer.echo(f"{c}: MAE(median) {mae:.2f} SGD/MWh over {part.height} forecasts")
+    typer.echo(f"Saved to {path}")
 
 
 def _print(report) -> None:

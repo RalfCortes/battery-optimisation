@@ -18,7 +18,7 @@ import structlog
 from pydantic import BaseModel
 
 from battery_optimisation.columns import Col
-from battery_optimisation.config import Covariate, ForecastConfig
+from battery_optimisation.config import Covariate, ForecastConfig, MarketConfig
 from battery_optimisation.data import weather
 from battery_optimisation.data.nems import (
     PERIODS_PER_DAY,
@@ -31,6 +31,7 @@ from battery_optimisation.data.weather import WeatherProcessingReport
 from battery_optimisation.forecast.covariates import add_known_covariates
 from battery_optimisation.forecast.quantiles import pit
 from battery_optimisation.forecast.scenarios import GaussianCopula, reduce_scenarios, sample_paths
+from battery_optimisation.sim.clearing import price_column
 from battery_optimisation.sim.metrics import coverage, crps_quantiles, mase, spike_rates
 from battery_optimisation.timing import INTERVAL, day_start, issue_time
 
@@ -260,3 +261,20 @@ def lag1(u: np.ndarray) -> float:
     return float(
         np.nanmean([np.corrcoef(z[:, t], z[:, t + 1])[0, 1] for t in range(z.shape[1] - 1)])
     )
+
+
+def ancillary_quantiles(
+    model,
+    features: pl.DataFrame,
+    issues: list[datetime],
+    trajectories: weather.WeatherTrajectories | None,
+    market: MarketConfig,
+) -> pl.DataFrame:
+    """Quantile forecasts of every enabled ancillary price (``features`` must hold their
+    columns), stacked with ``Col.TARGET`` = the price column. Same covariates as USEP."""
+    frames = []
+    for product in market.ancillary_products:
+        col = price_column(product, market)
+        qf = model.forecast_quantiles(features, issues, trajectories, target=col)
+        frames.append(qf.with_columns(pl.lit(str(col)).alias(Col.TARGET)))
+    return pl.concat(frames)

@@ -124,3 +124,42 @@ def test_non_strict_persistence_falls_back_to_the_history_mean() -> None:
     out = PersistenceForecaster(strict=False).forecast(view, view.end)
     assert out[Col.USEP].null_count() == 0
     assert out[Col.USEP][-1] == pytest.approx(10.0)  # mean of what was known
+
+
+def test_stored_ancillary_forecaster_gives_each_target_its_median() -> None:
+    from battery_optimisation.forecast.stored import AncillaryQuantileForecaster
+
+    issued = at(date(2026, 1, 1), 23)
+    frames = [
+        quantile_frame(
+            issued, normal_quantiles(np.full(48, v), 5.0, LEVELS), LEVELS, gap=2
+        ).with_columns(pl.lit(col).alias(Col.TARGET))
+        for col, v in [("regulation", 30.0), ("contingency_a", 12.0)]
+    ]
+    view = two_days_market().view(48)
+    out = AncillaryQuantileForecaster(pl.concat(frames)).forecast(view, view.end)
+    assert out.columns == [Col.INTERVAL_START, "regulation", "contingency_a"]
+    assert out["regulation"].to_numpy() == pytest.approx(30.0)
+    assert out["contingency_a"].to_numpy() == pytest.approx(12.0)
+
+
+def test_with_ancillary_joins_energy_and_ancillary_forecasts() -> None:
+    from battery_optimisation.forecast.baselines import WithAncillary
+
+    class Const:
+        def __init__(self, **cols):
+            self.cols = cols
+
+        def forecast(self, view, end):
+            n = int((end - view.now) / timedelta(minutes=30)) + 1
+            stamps = [view.now + timedelta(minutes=30 * i) for i in range(n)]
+            return pl.DataFrame(
+                {Col.INTERVAL_START: stamps, **{k: [v] * n for k, v in self.cols.items()}}
+            )
+
+    view = two_days_market().view(48)
+    out = WithAncillary(Const(usep=50.0, regulation=1.0), Const(regulation=7.0)).forecast(
+        view, view.end
+    )
+    assert out[Col.USEP].to_list() == [50.0] * 48
+    assert out["regulation"].to_list() == [7.0] * 48  # the ancillary forecaster wins
