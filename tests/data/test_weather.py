@@ -6,7 +6,7 @@ import polars as pl
 import pytest
 
 from battery_optimisation.columns import Col
-from battery_optimisation.config import GapFill, load_forecast
+from battery_optimisation.config import Aggregation, GapFill, load_forecast
 from battery_optimisation.data import weather
 from battery_optimisation.data.weather import Transform, WeatherVar, feature_name
 
@@ -268,3 +268,29 @@ def test_blank_runs_count_as_missing() -> None:
     daily, report = weather.to_features(raw, fcfg, date(2026, 1, 3), date(2026, 1, 3))
     # Jan 3's as-of run is 06Z Jan 2 (not downloaded): falls back to the latest complete run
     assert report.step(Transform.ASOF).days_without_run == []
+
+
+def test_run_missing_one_variable_is_kept() -> None:
+    """Only runs blank in every variable are dropped: one missing variable stays NaN for the
+    model (dropping the run would push the as-of fallback days back)."""
+    cfg = one_point().model_copy(
+        update={
+            "variables": {
+                WeatherVar.TEMPERATURE: Aggregation.MEAN,
+                WeatherVar.CLOUD_COVER: Aggregation.MEAN,
+            }
+        }
+    )
+    fcfg = FCFG.model_copy(update={"weather": cfg})
+    raw = raw_runs({utc(2026, 1, 1, 6): 0.0, utc(2026, 1, 1, 18): 0.0}, cfg).with_columns(
+        pl.when(pl.col(Col.RUN_TIME) == utc(2026, 1, 1, 18))
+        .then(None)
+        .otherwise(pl.col(weather.COLUMN[WeatherVar.CLOUD_COVER]))
+        .alias(weather.COLUMN[WeatherVar.CLOUD_COVER])
+    )
+    wx = weather.WeatherTrajectories.from_raw(raw, fcfg)
+    assert utc(2026, 1, 1, 18) in wx.runs
+    out = wx.for_issue(sgt(2026, 1, 2, 10), [sgt(2026, 1, 2, 12)])
+    assert wx.fallbacks == 0
+    assert out[feature_name(WeatherVar.TEMPERATURE, P0)][0] is not None
+    assert out[feature_name(WeatherVar.CLOUD_COVER, P0)][0] is None

@@ -237,7 +237,8 @@ def parse_run(text: str, run: datetime, points: list[Point], cfg: WeatherConfig)
     )
 
 
-MIN_RUN_COMPLETENESS = 0.5  # a run with less of any variable is treated as missing
+MIN_RUN_COMPLETENESS = 0.5  # a run with less of every variable is treated as missing
+# (one missing variable stays NaN: Chronos-2 handles missing covariate values)
 RATE_LIMITED = 429
 BACKOFF_S = (60.0, 300.0, 900.0, 3600.0)  # waits after successive 429 answers
 
@@ -433,7 +434,7 @@ def _process_runs(
         )
     )
     share = complete.group_by(Col.RUN_TIME).agg(
-        pl.min_horizontal(pl.col(c).is_not_null().mean() for c in cols).alias("_ok")
+        pl.max_horizontal(pl.col(c).is_not_null().mean() for c in cols).alias("_ok")
     )
     blank = share.filter(pl.col("_ok") < MIN_RUN_COMPLETENESS)[Col.RUN_TIME].sort().to_list()
     if blank:
