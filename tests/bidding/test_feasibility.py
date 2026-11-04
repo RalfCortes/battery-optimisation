@@ -1,6 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import pytest
 
 from battery_optimisation.battery import Battery
@@ -87,3 +88,41 @@ def test_price_taking_tranches_count_as_cleared(battery_cfg) -> None:
     sure_sell = offers((Side.DISCHARGE, floor, 10.0))
     low, high = soc_range_after(50.0, [sure_sell], b, DT, floor=floor, cap=cap)
     assert low == high == pytest.approx(50.0 - 10.0 * DT / battery_cfg.eta_d)
+
+
+def test_soc_quantiles_after_pending_offers(battery_cfg) -> None:
+    from battery_optimisation.bidding.feasibility import soc_quantiles_after
+
+    b = Battery(battery_cfg, 50.0)
+    sell = offers((Side.DISCHARGE, 100.0, 20.0))
+    loss = DT / battery_cfg.eta_d
+    # one exact scenario: the quantiles are the exact SOC
+    low, high = soc_quantiles_after(
+        50.0, [sell], [np.array([150.0])], [np.array([1.0])], b, DT, 0.05
+    )
+    assert low == high == pytest.approx(50.0 - 20.0 * loss)
+    # 90% of scenarios do not clear the sale: the 5% quantile still sees it, the 95% does not
+    prices = np.array([150.0] + [50.0] * 9)
+    low, high = soc_quantiles_after(50.0, [sell], [prices], [np.full(10, 0.1)], b, DT, 0.05)
+    assert low == pytest.approx(50.0 - 20.0 * loss)
+    assert high == pytest.approx(50.0)
+    # two pending intervals combine (all scenario pairs, weighted)
+    low, high = soc_quantiles_after(
+        50.0, [sell, sell], [np.array([150.0, 50.0])] * 2, [np.array([0.5, 0.5])] * 2, b, DT, 0.2
+    )
+    assert low == pytest.approx(50.0 - 40.0 * loss)  # both clear with probability 0.25 > 0.2
+    assert high == pytest.approx(50.0)
+
+
+def test_probabilistic_caps_are_looser_than_worst_case(battery_cfg) -> None:
+    from battery_optimisation.bidding.feasibility import caps_from_bounds
+
+    b = Battery(battery_cfg, 20.0)
+    pending = [offers((Side.DISCHARGE, 300.0, 15.0))]  # rarely clears
+    wanted = offers((Side.DISCHARGE, 200.0, 40.0))
+    worst = make_feasible(wanted, 20.0, pending, b, DT)
+    likely = caps_from_bounds(
+        wanted, low=20.0 - 0.05 * battery_cfg.usable_mwh, high=20.0, battery=b, dt=DT
+    )
+    total = lambda o: sum(t.quantity_mw for t in o.tranches)  # noqa: E731
+    assert total(likely) > total(worst)

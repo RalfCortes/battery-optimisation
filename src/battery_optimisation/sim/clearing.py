@@ -12,7 +12,7 @@ of earlier intervals only.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Self
@@ -22,7 +22,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict, NonNegativeFloat
 
 from battery_optimisation.columns import Col
-from battery_optimisation.config import MarketConfig
+from battery_optimisation.config import MarketConfig, Product, ReserveGroup
 
 log = structlog.get_logger(__name__)
 
@@ -30,6 +30,42 @@ log = structlog.get_logger(__name__)
 class Side(StrEnum):
     CHARGE = "charge"  # bid to buy energy
     DISCHARGE = "discharge"  # offer to sell energy
+
+
+_RESERVE_COLUMN: dict[tuple[Product, ReserveGroup], Col] = {
+    (Product.PRIMARY_RESERVE, ReserveGroup.A): Col.PRIMARY_A,
+    (Product.PRIMARY_RESERVE, ReserveGroup.B): Col.PRIMARY_B,
+    (Product.PRIMARY_RESERVE, ReserveGroup.C): Col.PRIMARY_C,
+    (Product.PRIMARY_RESERVE, ReserveGroup.D): Col.PRIMARY_D,
+    (Product.PRIMARY_RESERVE, ReserveGroup.E): Col.PRIMARY_E,
+    (Product.CONTINGENCY_RESERVE, ReserveGroup.A): Col.CONTINGENCY_A,
+    (Product.CONTINGENCY_RESERVE, ReserveGroup.B): Col.CONTINGENCY_B,
+    (Product.CONTINGENCY_RESERVE, ReserveGroup.C): Col.CONTINGENCY_C,
+    (Product.CONTINGENCY_RESERVE, ReserveGroup.D): Col.CONTINGENCY_D,
+    (Product.CONTINGENCY_RESERVE, ReserveGroup.E): Col.CONTINGENCY_E,
+}
+AWARD_COLUMN: dict[Product, Col] = {
+    Product.REGULATION: Col.REG_MW,
+    Product.PRIMARY_RESERVE: Col.PRI_MW,
+    Product.CONTINGENCY_RESERVE: Col.CON_MW,
+}
+
+
+def price_column(product: Product, market: MarketConfig) -> Col:
+    """Price column of an ancillary product (reserve prices depend on the reserve group)."""
+    if product is Product.REGULATION:
+        return Col.REGULATION
+    return _RESERVE_COLUMN[(product, market.ancillary.reserve_group)]
+
+
+class AncillaryTranche(BaseModel):
+    """Availability offered for one ancillary product: clears if price <= realised price."""
+
+    model_config = ConfigDict(frozen=True)
+
+    product: Product
+    price: NonNegativeFloat  # SGD per MW per hour (= SGD/MWh of availability)
+    quantity_mw: NonNegativeFloat
 
 
 class Tranche(BaseModel):
@@ -46,13 +82,20 @@ class IntervalOffers(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     interval_start: datetime
-    tranches: tuple[Tranche, ...] = ()
+    tranches: tuple[Tranche, ...] = ()  # energy
+    ancillary: tuple[AncillaryTranche, ...] = ()
 
     @classmethod
     def self_schedule(
-        cls, interval_start: datetime, charge_mw: float, discharge_mw: float, market: MarketConfig
+        cls,
+        interval_start: datetime,
+        charge_mw: float,
+        discharge_mw: float,
+        market: MarketConfig,
+        awards: dict[Product, float] | None = None,
     ) -> Self:
-        """Price-taking offers that always clear: discharge at the floor, charge at the cap."""
+        """Price-taking offers that always clear: discharge at the floor, charge at the cap,
+        ancillary availability at price 0."""
         tranches = []
         if discharge_mw > 0:
             tranches.append(
@@ -62,7 +105,12 @@ class IntervalOffers(BaseModel):
             tranches.append(
                 Tranche(side=Side.CHARGE, price=market.price_cap, quantity_mw=charge_mw)
             )
-        return cls(interval_start=interval_start, tranches=tuple(tranches))
+        ancillary = tuple(
+            AncillaryTranche(product=p, price=0.0, quantity_mw=mw)
+            for p, mw in (awards or {}).items()
+            if mw > 0
+        )
+        return cls(interval_start=interval_start, tranches=tuple(tranches), ancillary=ancillary)
 
     def on(self, side: Side) -> list[Tranche]:
         return [t for t in self.tranches if t.side is side]
@@ -74,6 +122,8 @@ class Cleared:
     price: float  # realised USEP, SGD/MWh
     charge_mw: float
     discharge_mw: float
+    awards: dict[Product, float] = field(default_factory=dict)  # ancillary MW
+    ancillary_prices: dict[Product, float] = field(default_factory=dict)
 
 
 def check_prices(prices: pl.DataFrame, market: MarketConfig) -> None:
@@ -126,10 +176,16 @@ class Market:
     def __init__(
         self, config: MarketConfig, prices: pl.DataFrame, history: pl.DataFrame | None = None
     ) -> None:
-        prices = prices.select(Col.INTERVAL_START, Col.USEP).sort(Col.INTERVAL_START)
+        self.products = [
+            p for p in config.ancillary_products if price_column(p, config) in prices.columns
+        ]
+        price_cols = [price_column(p, config) for p in self.products]
+        prices = prices.select(Col.INTERVAL_START, Col.USEP, *price_cols).sort(Col.INTERVAL_START)
         check_prices(prices, config)
         before = (
-            history.select(Col.INTERVAL_START, Col.USEP)
+            history.select(
+                Col.INTERVAL_START, Col.USEP, *[c for c in price_cols if c in history.columns]
+            )
             .filter(pl.col(Col.INTERVAL_START) < prices[0, Col.INTERVAL_START])
             .sort(Col.INTERVAL_START)
             if history is not None
@@ -139,7 +195,11 @@ class Market:
         self.prices = prices
         self.intervals: list[datetime] = prices[Col.INTERVAL_START].to_list()
         self._price_at = dict(zip(self.intervals, prices[Col.USEP].to_list(), strict=True))
-        self._known = pl.concat([before, prices])
+        self._ancillary_at = {
+            p: dict(zip(self.intervals, prices[price_column(p, config)].to_list(), strict=True))
+            for p in self.products
+        }
+        self._known = pl.concat([before, prices], how="diagonal_relaxed")
         self._offset = before.height
 
     def view(self, index: int) -> MarketView:
@@ -154,6 +214,11 @@ class Market:
         for t in offers.tranches:
             if not cfg.price_floor <= t.price <= cfg.price_cap:
                 raise ValueError(f"offer price {t.price} outside [floor, cap]")
+        for product in {t.product for t in offers.ancillary}:
+            if sum(t.product is product for t in offers.ancillary) > cfg.n_tranches:
+                raise ValueError(f"more than {cfg.n_tranches} {product} tranches")
+            if product not in self.products:
+                raise ValueError(f"{product} is not traded in this market window")
 
     def clear(self, offers: IntervalOffers) -> Cleared:
         self.validate(offers)
@@ -164,4 +229,14 @@ class Market:
             log.warning("clearing.netted", interval=str(offers.interval_start))
             net = discharge - charge
             discharge, charge = max(net, 0.0), max(-net, 0.0)
-        return Cleared(offers.interval_start, price, float(charge), float(discharge))
+        awards, ancillary_prices = {}, {}
+        for p in self.products:
+            realised = self._ancillary_at[p][offers.interval_start]
+            mw = sum(
+                t.quantity_mw for t in offers.ancillary if t.product is p and t.price <= realised
+            )
+            awards[p] = min(float(mw), self.config.ancillary.max_award_mw.get(p, float("inf")))
+            ancillary_prices[p] = realised
+        return Cleared(
+            offers.interval_start, price, float(charge), float(discharge), awards, ancillary_prices
+        )

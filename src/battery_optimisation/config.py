@@ -34,6 +34,21 @@ class Product(StrEnum):
     CONTINGENCY_RESERVE = "contingency_reserve"
 
 
+ANCILLARY_PRODUCTS = (Product.REGULATION, Product.PRIMARY_RESERVE, Product.CONTINGENCY_RESERVE)
+RAISE_PRODUCTS = ANCILLARY_PRODUCTS  # need upward power and stored energy
+LOWER_PRODUCTS = (Product.REGULATION,)  # need downward power and free capacity
+
+
+class ReserveGroup(StrEnum):
+    """NEMS reserve groups (prices differ by group)."""
+
+    A = "A"
+    B = "B"
+    C = "C"
+    D = "D"
+    E = "E"
+
+
 class Covariate(StrEnum):
     """Covariate groups for the price forecast (columns: ``forecast.covariates.COVARIATES``)."""
 
@@ -80,6 +95,12 @@ class BatteryConfig(_Config):
         return self.soc_max - self.soc_min
 
 
+class AncillaryConfig(_Config):
+    reserve_group: ReserveGroup  # whose reserve prices apply to the battery
+    regulation_utilisation: float = Field(ge=0, le=1)  # share of regulation MW actually moved
+    max_award_mw: dict[Product, NonNegativeFloat]  # cap per product (market size)
+
+
 class MarketConfig(_Config):
     """Market parameters. Prices in SGD/MWh, durations in hours."""
 
@@ -87,11 +108,13 @@ class MarketConfig(_Config):
     interval_h: PositiveFloat
     intervals_per_day: PositiveInt
     gate_closure_intervals: NonNegativeInt  # offers for t are fixed at the start of t - this
+    shortfall_penalty_sgd_per_mwh: NonNegativeFloat  # cleared energy the battery cannot deliver
     n_tranches: PositiveInt
     price_floor: float
     price_cap: float
     products: dict[Product, bool]
     reserve_sustain_h: dict[Product, NonNegativeFloat | None]
+    ancillary: AncillaryConfig
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:
@@ -104,6 +127,13 @@ class MarketConfig(_Config):
     @property
     def enabled_products(self) -> list[Product]:
         return [p for p, on in self.products.items() if on]
+
+    @property
+    def ancillary_products(self) -> list[Product]:
+        return [p for p in ANCILLARY_PRODUCTS if self.products.get(p, False)]
+
+    def sustain_h(self, product: Product) -> float:
+        return self.reserve_sustain_h.get(product) or 0.0
 
 
 def _read_yaml(path: Path) -> dict:
@@ -195,7 +225,9 @@ class ForecastConfig(_Config):
     batch_size: PositiveInt
     context_days: PositiveInt
     prediction_length: PositiveInt
-    issue_lead_intervals: NonNegativeInt  # forecast for day D issued this long before D 00:00
+    issue_lead_intervals: NonNegativeInt  # issued this many intervals before its first interval
+    # 1 = re-forecast at every gate closure, 48 = once a day (default: runs saved before it existed)
+    issue_every_intervals: PositiveInt = 48
     quantile_levels: list[float]
     covariates: list[Covariate]
     weather: WeatherConfig
@@ -231,11 +263,23 @@ class SweepConfig(_Config):
         return [self.price_min + i * self.price_step for i in range(n)]
 
 
+class FeasibilityMode(StrEnum):
+    WORST_CASE = "worst_case"  # every pending tranche may clear: never infeasible
+    PROBABILISTIC = "probabilistic"  # SOC quantiles over the scenarios + margin
+
+
+class FeasibilityConfig(_Config):
+    mode: FeasibilityMode
+    soc_quantile: float = Field(gt=0, lt=0.5)
+    margin_pct: NonNegativeFloat  # of usable capacity, widens the probabilistic bounds
+
+
 class BiddingConfig(_Config):
     soc_levels: int = Field(ge=3)  # SOC grid points from soc_min to soc_max
     terminal_penalty_sgd_per_mwh: PositiveFloat  # per MWh below soc_init at the end of the day
     price_band_margin_sgd_per_mwh: NonNegativeFloat  # offers kept within scenario range +- this
     sweep: SweepConfig
+    feasibility: FeasibilityConfig
 
 
 def load_bidding(path: Path = CONFIG_DIR / "bidding.yaml") -> BiddingConfig:

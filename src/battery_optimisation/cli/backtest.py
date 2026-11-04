@@ -44,6 +44,9 @@ def perfect_foresight(
         Horizon, typer.Option(help="full = one MILP (true optimum); day = daily MILPs.")
     ] = Horizon.FULL,
     runs_dir: Annotated[Path, typer.Option()] = backtest.DEFAULT_RUNS_DIR,
+    ancillary: Annotated[
+        bool, typer.Option(help="Co-optimise regulation and reserves with energy.")
+    ] = False,
 ) -> None:
     """Perfect-foresight benchmark on realised USEP; saves summary.json + dispatch.parquet."""
     configure_logging()
@@ -53,7 +56,7 @@ def perfect_foresight(
         window_start = start.date()
 
     summary, dispatch = backtest.run_perfect_foresight(
-        window_start, window_end, battery, market, horizon
+        window_start, window_end, battery, market, horizon, ancillary
     )
     run_dir = backtest.save_run(summary, dispatch, runs_dir)
 
@@ -87,6 +90,7 @@ def perfect_foresight(
     typer.echo(
         f"\nTotal profit   {t.profit_sgd:>14,.0f} SGD  ({summary.profit_per_day_sgd:,.0f} /day)"
         f"\nRevenue        {t.revenue_sgd:>14,.0f} SGD"
+        f"\nAncillary      {t.ancillary_sgd:>14,.0f} SGD"
         f"\nDegradation    {t.degradation_sgd:>14,.0f} SGD"
         f"\nCycles         {t.cycles:>14,.1f}      ({summary.cycles_per_day:.2f} /day)"
         f"\nMILP solves    {summary.plans:>14,d}      ({summary.solve_time_s:.1f} s)"

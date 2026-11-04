@@ -13,8 +13,6 @@ gate-closure feasibility caps.
 
 from __future__ import annotations
 
-from datetime import timedelta
-
 import numpy as np
 import polars as pl
 from pydantic import BaseModel
@@ -74,14 +72,13 @@ def sweep(strategy: WaterValueStrategy, prices: np.ndarray) -> tuple[SweepStats,
     margin = strategy.bidding.price_band_margin_sgd_per_mwh
     rows, all_gaps, band_gaps = [], [], []
     for at, offers in sorted(strategy.submitted.items()):
-        day = at.date()
-        t = int((at - strategy.day_start_of(day)) / timedelta(hours=dt))
-        vf = strategy.value_functions[day]
+        issue, t = strategy.issue_of[at]
+        vf = strategy.value_functions[issue]
         soc = strategy.reference_soc[at]
         gap = np.abs(
             offered_net_mw(offers, prices) - optimal_net_mw(vf, t, soc, battery, dt, prices)
         )
-        stage = strategy.stage_prices(day)[t]
+        stage = strategy.stage_prices(issue)[t]
         in_band = (prices >= stage.min() - margin) & (prices <= stage.max() + margin)
         all_gaps.append(gap)
         band_gaps.append(gap[in_band])
@@ -122,13 +119,12 @@ def sweep_breakdown(strategy: WaterValueStrategy, prices: np.ndarray) -> list[St
     gaps: dict[CurveStep, list[np.ndarray]] = {s: [] for s in CurveStep}
     band: dict[CurveStep, list[np.ndarray]] = {s: [] for s in CurveStep}
     for at in sorted(strategy.submitted):
-        day = at.date()
-        t = int((at - strategy.day_start_of(day)) / timedelta(hours=dt))
+        issue, t = strategy.issue_of[at]
         reference = strategy.reference_soc[at]
-        pending = [strategy.submitted[p] for p in strategy.pending_slots[at]]
+        pending = [(p, strategy.submitted[p]) for p in strategy.pending_slots[at]]
         steps = strategy.curve_steps(at, strategy.decision_soc[at], reference, pending)
-        best = optimal_net_mw(strategy.value_functions[day], t, reference, battery, dt, prices)
-        stage = strategy.stage_prices(day)[t]
+        best = optimal_net_mw(strategy.value_functions[issue], t, reference, battery, dt, prices)
+        stage = strategy.stage_prices(issue)[t]
         in_band = (prices >= stage.min() - margin) & (prices <= stage.max() + margin)
         for step, offers in steps.items():
             gap = np.abs(offered_net_mw(offers, prices) - best)

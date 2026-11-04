@@ -41,6 +41,16 @@ class ValueFunction:
         return np.diff(self.values[t]) / np.diff(self.soc)
 
 
+@dataclass(frozen=True)
+class StageLimits:
+    """Per-stage limits left by ancillary commitments (arrays of length T)."""
+
+    max_discharge_mw: np.ndarray  # P - raise reserves held
+    max_charge_mw: np.ndarray  # P - lower reserves held
+    soc_low: np.ndarray  # SOC to hold at the start and end of the stage (raise energy)
+    soc_high: np.ndarray  # (lower energy)
+
+
 def terminal_values(soc: np.ndarray, target: float, penalty: float) -> np.ndarray:
     return -penalty * np.maximum(target - soc, 0.0)
 
@@ -52,8 +62,12 @@ def solve_sdp(
     dt: float,
     cfg: BiddingConfig,
     soc_target: float | None = None,
+    limits: StageLimits | None = None,
 ) -> ValueFunction:
-    """Backward recursion. ``prices`` [T, K] scenario values per stage, ``weights`` [K]."""
+    """Backward recursion. ``prices`` [T, K] scenario values per stage, ``weights`` [K].
+
+    ``limits``: per-stage power caps (hard) and SOC band (penalised like the terminal rule, at
+    the start of the stage and at its end) left by ancillary commitments."""
     t0 = time.perf_counter()
     b = battery.config
     weights = np.asarray(weights, float) / np.sum(weights)
@@ -69,8 +83,25 @@ def solve_sdp(
     values = np.empty((n_stages + 1, soc.size))
     target = b.soc_init if soc_target is None else soc_target
     values[-1] = terminal_values(soc, target, cfg.terminal_penalty_sgd_per_mwh)
+    penalty = cfg.terminal_penalty_sgd_per_mwh
+
+    def outside(lo: float, hi: float) -> np.ndarray:
+        return -penalty * (np.maximum(lo - soc, 0.0) + np.maximum(soc - hi, 0.0))
+
     for t in range(n_stages - 1, -1, -1):
-        base = np.where(feasible, values[t + 1][None, :] - degradation, -np.inf)  # [N, N]
+        ok, end_band, start_band = feasible, 0.0, 0.0
+        if limits is not None:
+            ok = (
+                feasible
+                & (discharge <= limits.max_discharge_mw[t] + TOL)
+                & (charge <= limits.max_charge_mw[t] + TOL)
+            )
+            if not ok.any(axis=1).all():  # keep at least "stay" (penalised by the band)
+                ok = ok | np.eye(soc.size, dtype=bool)
+            lo, hi = limits.soc_low[t], limits.soc_high[t]
+            end_band = outside(lo, hi)[None, :]  # end of stage t
+            start_band = outside(lo, hi)  # start of stage t
+        base = np.where(ok, values[t + 1][None, :] - degradation + end_band, -np.inf)  # [N, N]
         best = (prices[t][:, None, None] * sold[None] + base[None]).max(axis=2)  # [K, N]
-        values[t] = weights @ best
+        values[t] = weights @ best + start_band
     return ValueFunction(soc=soc, values=values, solve_time_s=time.perf_counter() - t0)

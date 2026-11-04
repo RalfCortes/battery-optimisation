@@ -74,3 +74,53 @@ def test_quantile_forecaster_uses_issues_known_at_gate_closure() -> None:
     early_view = Market(late, market.prices).view(48)  # decided 22:30: forecast not issued yet
     with pytest.raises(ValueError, match="no forecast"):
         QuantileForecaster(rows, level=0.5).forecast(early_view, early_view.end)
+
+
+def test_persistence_carries_ancillary_prices() -> None:
+    from battery_optimisation.config import Product
+    from battery_optimisation.sim.clearing import price_column
+
+    cfg = load_market()
+    reg = price_column(Product.REGULATION, cfg)
+    prices = make_prices([float(i) for i in range(144)]).with_columns(
+        (pl.col(Col.USEP) * 0 + pl.Series(range(144)).cast(pl.Float64) + 1000).alias(reg)
+    )
+    market = Market(cfg, prices)
+    view = market.view(96)
+    out = PersistenceForecaster().forecast(view, view.end)
+    assert reg in out.columns
+    assert out[reg][0] == 1000 + 48  # same half-hour yesterday
+
+
+def test_energy_forecast_with_ancillary_persistence() -> None:
+    from battery_optimisation.config import Product
+    from battery_optimisation.forecast.baselines import WithAncillaryPersistence
+    from battery_optimisation.sim.clearing import price_column
+
+    cfg = load_market()
+    reg = price_column(Product.REGULATION, cfg)
+    prices = make_prices([float(i) for i in range(144)]).with_columns(
+        (pl.Series(range(144)).cast(pl.Float64) + 1000).alias(reg)
+    )
+    market = Market(cfg, prices.slice(96), history=prices.slice(0, 96))  # two days known
+    view = market.view(0)  # day 3 00:00, decided day 2 23:00
+
+    class Flat:
+        def forecast(self, view, end):
+            n = int((end - view.now) / timedelta(minutes=30)) + 1
+            stamps = [view.now + timedelta(minutes=30 * k) for k in range(n)]
+            return pl.DataFrame({Col.INTERVAL_START: stamps, Col.USEP: [7.0] * n})
+
+    out = WithAncillaryPersistence(Flat()).forecast(view, view.end)
+    assert out[Col.USEP].unique().to_list() == [7.0]  # energy from the energy forecaster
+    assert out[reg][0] == 1000.0 + 48  # ancillary: same half-hour yesterday
+
+
+def test_non_strict_persistence_falls_back_to_the_history_mean() -> None:
+    market = Market(load_market(), make_prices([10.0] * 48 + [20.0] * 48))
+    view = market.view(48)  # yesterday's 23:00 and 23:30 not yet known, no day before
+    with pytest.raises(ValueError):
+        PersistenceForecaster().forecast(view, view.end)
+    out = PersistenceForecaster(strict=False).forecast(view, view.end)
+    assert out[Col.USEP].null_count() == 0
+    assert out[Col.USEP][-1] == pytest.approx(10.0)  # mean of what was known

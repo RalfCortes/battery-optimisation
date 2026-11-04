@@ -37,3 +37,27 @@ def test_rejects_gaps_and_missing_prices(battery_cfg, market_cfg) -> None:
     missing = prices.with_columns(pl.lit(None, pl.Float64).alias(Col.USEP))
     with pytest.raises(ValueError, match="missing"):
         solve_schedule(missing, Battery(battery_cfg), market_cfg)
+
+
+def test_milp_cooptimises_ancillary_services(battery_cfg, market_cfg) -> None:
+    from battery_optimisation.config import Product
+    from battery_optimisation.sim.clearing import price_column
+
+    flat = make_prices(np.full(48, 100.0))  # no energy spread: only reserves pay
+    prices = flat.with_columns(
+        pl.lit(25.0).alias(price_column(Product.REGULATION, market_cfg)),
+        pl.lit(5.0).alias(price_column(Product.PRIMARY_RESERVE, market_cfg)),
+        pl.lit(30.0).alias(price_column(Product.CONTINGENCY_RESERVE, market_cfg)),
+    )
+    b = Battery(battery_cfg)
+    energy_only = solve_schedule(flat, b, market_cfg)
+    both = solve_schedule(prices, b, market_cfg)
+    assert both.objective_sgd > energy_only.objective_sgd >= -1e-6
+    s = both.schedule
+    p = battery_cfg.p_max_mw
+    raise_mw = (
+        s[Col.DISCHARGE_MW] - s[Col.CHARGE_MW] + s[Col.REG_MW] + s[Col.PRI_MW] + s[Col.CON_MW]
+    )
+    assert raise_mw.max() <= p + 1e-6
+    assert (s[Col.CHARGE_MW] - s[Col.DISCHARGE_MW] + s[Col.REG_MW]).max() <= p + 1e-6
+    assert s[Col.CON_MW].sum() > 0  # the best-paid reserve is used

@@ -30,7 +30,8 @@ def synthetic(days: int = DAYS, seed: int = 0) -> tuple[pl.DataFrame, pl.DataFra
 
 
 def test_issue_times_one_per_delivery_day_before_it_starts() -> None:
-    issues = walkforward.issue_times(date(2026, 1, 1), date(2026, 1, 3), CFG)
+    daily = CFG.model_copy(update={"issue_every_intervals": 48})
+    issues = walkforward.issue_times(date(2026, 1, 1), date(2026, 1, 3), daily)
     assert issues == [
         at(date(2025, 12, 31), 23),
         at(date(2026, 1, 1), 23),
@@ -125,3 +126,23 @@ def test_months_without_spikes_round_trip_through_json() -> None:
     assert stats.spike_hit_rate is None  # no spike: undefined, not NaN
     again = walkforward.ForecastStats.model_validate_json(stats.model_dump_json())
     assert again == stats
+
+
+def test_intraday_issues_at_every_gate_closure() -> None:
+    issues = walkforward.issue_times(date(2026, 1, 1), date(2026, 1, 1), CFG)  # every interval
+    assert len(issues) == 48
+    assert issues[0] == at(date(2025, 12, 31), 23)  # gate closure of Jan 1 00:00
+    assert issues[-1] == at(date(2026, 1, 1), 22) + timedelta(minutes=30)  # of 23:30
+    hourly = CFG.model_copy(update={"issue_every_intervals": 2})
+    assert len(walkforward.issue_times(date(2026, 1, 1), date(2026, 1, 1), hourly)) == 24
+
+
+def test_strategy_horizon_follows_the_forecast_cadence() -> None:
+    from battery_optimisation.bidding.strategy import Horizon
+    from battery_optimisation.config import load_market
+    from battery_optimisation.forecast.report import schedule_horizon
+
+    market = load_market()
+    assert schedule_horizon(CFG, market) is Horizon.ROLLING  # re-forecast at every gate closure
+    daily = CFG.model_copy(update={"issue_every_intervals": 48})
+    assert schedule_horizon(daily, market) is Horizon.DAY

@@ -15,3 +15,13 @@ sweep:
   price_min: -100
   price_max: 2000
   price_step: 10
+
+# Gate-closure feasibility of tranche sizes (bidding/feasibility.py):
+#   worst_case     every pending tranche may clear: never infeasible, conservative
+#   probabilistic  SOC after the pending offers at the soc_quantile / 1 - soc_quantile of the
+#                  scenarios, widened by margin_pct of usable capacity; rare shortfalls are
+#                  settled by the simulator at market.shortfall_penalty_sgd_per_mwh
+feasibility:
+  mode: worst_case
+  soc_quantile: 0.05
+  margin_pct: 5.0

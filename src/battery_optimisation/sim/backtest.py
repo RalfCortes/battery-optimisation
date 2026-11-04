@@ -26,10 +26,10 @@ from battery_optimisation.config import BatteryConfig, MarketConfig
 from battery_optimisation.data.nems import TZ, NemsSeries, load_nems
 from battery_optimisation.forecast.base import Forecaster
 from battery_optimisation.forecast.perfect import PerfectForecaster
-from battery_optimisation.sim.clearing import Market
+from battery_optimisation.sim.clearing import Market, price_column
 from battery_optimisation.sim.dispatch import Dispatch
 from battery_optimisation.sim.metrics import Period, PeriodStats
-from battery_optimisation.sim.simulator import Simulator, Strategy
+from battery_optimisation.sim.simulator import ShortfallPolicy, Simulator, Strategy
 
 log = structlog.get_logger(__name__)
 
@@ -84,9 +84,12 @@ class RunSummary(BaseModel):
     monthly: list[PeriodStats]
     daily: list[PeriodStats]
 
+    ancillary: bool = False  # regulation and reserves co-optimised with energy
+
     @property
     def name(self) -> str:
-        return f"{self.strategy}_{self.horizon}_{self.start}_{self.end}"
+        suffix = "_as" if self.ancillary else ""
+        return f"{self.strategy}_{self.horizon}_{self.start}_{self.end}{suffix}"
 
 
 def last_months_window(months: int, end: date | None = None) -> tuple[date, date]:
@@ -128,10 +131,12 @@ def run_strategy(
     battery: BatteryConfig,
     market: MarketConfig,
     history: pl.DataFrame | None = None,
+    on_shortfall: ShortfallPolicy = ShortfallPolicy.RAISE,
 ) -> tuple[RunSummary, Dispatch]:
     """Any strategy through the simulator over ``prices``; summarised."""
     t0 = time.perf_counter()
-    dispatch = Simulator(Market(market, prices, history), Battery(battery)).run(strategy)
+    simulator = Simulator(Market(market, prices, history), Battery(battery), on_shortfall)
+    dispatch = simulator.run(strategy)
     simulate_time = time.perf_counter() - t0
 
     if name is StrategyName.PERFECT_FORESIGHT:
@@ -174,18 +179,30 @@ def run_strategy(
     return summary, dispatch
 
 
+def load_prices(start: date, end: date, market: MarketConfig, ancillary: bool) -> pl.DataFrame:
+    """Realised USEP (+ the enabled ancillary products' price columns) for [start, end]."""
+    if not ancillary:
+        return load_nems(start, end, series=[NemsSeries.USEP]).select(Col.INTERVAL_START, Col.USEP)
+    frame = load_nems(start, end)
+    cols = [price_column(p, market) for p in market.ancillary_products]
+    return frame.select(Col.INTERVAL_START, Col.USEP, *cols)
+
+
 def run_perfect_foresight(
     start: date,
     end: date,
     battery: BatteryConfig,
     market: MarketConfig,
     horizon: Horizon = Horizon.FULL,
+    ancillary: bool = False,
 ) -> tuple[RunSummary, Dispatch]:
-    """Perfect-foresight benchmark: MILP on realised USEP, self-scheduled through the simulator."""
-    prices = load_nems(start, end, series=[NemsSeries.USEP]).select(Col.INTERVAL_START, Col.USEP)
-    return run_schedule(
+    """Perfect-foresight benchmark: MILP on realised prices (USEP, plus the enabled ancillary
+    products when ``ancillary``), self-scheduled through the simulator."""
+    prices = load_prices(start, end, market, ancillary)
+    summary, dispatch = run_schedule(
         StrategyName.PERFECT_FORESIGHT, PerfectForecaster(prices), prices, battery, market, horizon
     )
+    return summary.model_copy(update={"ancillary": ancillary}), dispatch
 
 
 def save_run(summary: RunSummary, dispatch: Dispatch, runs_dir: Path = DEFAULT_RUNS_DIR) -> Path:

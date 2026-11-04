@@ -7,6 +7,8 @@ intervals_per_day: 48
 
 gate_closure_intervals: 2    # offers for interval t are fixed at the start of t-2 (NEMS ~65 min)
 
+shortfall_penalty_sgd_per_mwh: 4500.0  # cleared energy the battery cannot deliver (TODO: confirm)
+
 n_tranches: 10               # K price-quantity tranches per product (TODO: confirm)
 
 price_floor: -4500.0         # SGD/MWh (TODO: confirm)
@@ -22,4 +24,13 @@ products:
 reserve_sustain_h:
   primary_reserve: 0.1666666667   # ~10 minutes
   contingency_reserve: 0.5        # 30 minutes
-  regulation: null                # TODO: depends on how regulation is activated/settled
+  regulation: 0.25                # TODO: energy held both ways per MW of regulation (assumed)
+
+# Ancillary services (sim/clearing.py, optim/milp.py). All TODO: confirm with the challenge rules.
+ancillary:
+  reserve_group: A               # NEMS reserve group whose prices apply to the battery
+  regulation_utilisation: 0.1    # share of regulation MW actually moved (throughput -> degradation)
+  max_award_mw:                  # cap per product: Singapore requirements are small, price-taking
+    regulation: 100.0            # may not hold for a 100 MW battery
+    primary_reserve: 100.0
+    contingency_reserve: 100.0

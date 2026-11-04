@@ -20,22 +20,31 @@ from pydantic import BaseModel
 from battery_optimisation.columns import Col
 from battery_optimisation.config import Covariate, ForecastConfig
 from battery_optimisation.data import weather
-from battery_optimisation.data.nems import TZ, NemsSeries, load_nems, month_chunks
+from battery_optimisation.data.nems import (
+    PERIODS_PER_DAY,
+    TZ,
+    NemsSeries,
+    load_nems,
+    month_chunks,
+)
 from battery_optimisation.data.weather import WeatherProcessingReport
 from battery_optimisation.forecast.covariates import add_known_covariates
 from battery_optimisation.forecast.quantiles import pit
 from battery_optimisation.forecast.scenarios import GaussianCopula, reduce_scenarios, sample_paths
 from battery_optimisation.sim.metrics import coverage, crps_quantiles, mase, spike_rates
-from battery_optimisation.timing import day_start, issue_time
+from battery_optimisation.timing import INTERVAL, day_start, issue_time
 
 log = structlog.get_logger(__name__)
 _SGT = ZoneInfo(TZ)
 
 
 def issue_times(start: date, end: date, cfg: ForecastConfig) -> list[datetime]:
-    """Issue times of the forecasts for delivery days ``start`` to ``end`` inclusive."""
-    days = (end - start).days + 1
-    return [issue_time(start + timedelta(days=d), cfg) for d in range(days)]
+    """Issue times for the intervals of days ``start``..``end``: a forecast is issued at the gate
+    closure of every ``issue_every_intervals``-th interval (from 00:00), for the next
+    ``prediction_length`` intervals. With 48 this is one forecast per day, at D-1 23:00."""
+    first = issue_time(start, cfg)  # gate closure of start 00:00
+    n = ((end - start).days + 1) * PERIODS_PER_DAY
+    return [first + k * INTERVAL for k in range(0, n, cfg.issue_every_intervals)]
 
 
 def month_windows(start: date, end: date) -> list[tuple[date, date]]:
@@ -62,24 +71,28 @@ def check_weather_coverage(
 
 def build_features(
     start: date, end: date, cfg: ForecastConfig
-) -> tuple[pl.DataFrame, WeatherProcessingReport | None]:
+) -> tuple[pl.DataFrame, weather.WeatherTrajectories | None, WeatherProcessingReport | None]:
     """USEP target + covariates for issues ``start``..``end`` (context before, horizon after).
 
-    Weather is processed in memory from the raw files; its transform report is returned.
+    Weather is processed in memory from the raw run files: daily as-of values in the frame
+    (context), and per-run trajectories for each issue's horizon. The transform report is
+    returned.
     """
     first = start - timedelta(days=cfg.context_days + 1)
     last = end + timedelta(days=cfg.prediction_length // 48 + 1)
     frame = load_nems(first, last, series=[NemsSeries.USEP]).select(
         Col.INTERVAL_START, Col.USEP, Col.DEMAND_MW
     )
-    report = None
+    report, trajectories = None, None
     if Covariate.WEATHER in cfg.covariates:
-        raw = weather.load_runs(cfg.weather.model, weather.needed_runs(first, last, cfg))
+        runs = weather.all_runs(first - timedelta(days=2), last, cfg.weather)
+        raw = weather.load_runs(cfg.weather.model, runs)
         wx, report = weather.to_features(raw, cfg, first, last)
-        wx = wx.drop(Col.WEATHER_LEAD_H)  # constant per time of day for a fixed issue time
+        wx = wx.drop(Col.WEATHER_LEAD_H)
         frame = frame.join(wx, on=Col.INTERVAL_START, how="left")
         check_weather_coverage(frame, cfg, datetime.combine(first, datetime.min.time(), _SGT))
-    return add_known_covariates(frame), report
+        trajectories = weather.WeatherTrajectories.from_raw(raw, cfg)
+    return add_known_covariates(frame), trajectories, report
 
 
 # --------------------------------------------------------------------------- quantile arrays

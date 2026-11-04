@@ -55,3 +55,27 @@ def test_higher_future_prices_raise_the_water_value(battery_cfg, market_cfg):
     high = solve_sdp(prices * 2, weights, battery, market_cfg.interval_h, BIDDING)
     mid = len(low.soc) // 2
     assert high.water_value(24)[mid] > low.water_value(24)[mid]
+
+
+def test_stage_limits_keep_soc_in_band_and_power_down(battery_cfg, market_cfg):
+    """Reserves held at a stage shrink its power headroom and its SOC band."""
+    from battery_optimisation.optim.sdp import StageLimits
+
+    prices = np.tile(np.array([50.0] * 24 + [400.0] * 24)[:, None], (1, 1))  # buy low, sell high
+    n = prices.shape[0]
+    lo = np.full(n, battery_cfg.soc_min)
+    lo[30:] = 60.0  # from stage 30, keep 60 MWh for raise reserves (above the 50 MWh end rule)
+    limits = StageLimits(
+        max_discharge_mw=np.full(n, 60.0),  # 40 MW held for raise reserves
+        max_charge_mw=np.full(n, battery_cfg.p_max_mw),
+        soc_low=lo,
+        soc_high=np.full(n, battery_cfg.soc_max),
+    )
+    b = Battery(battery_cfg)
+    free = solve_sdp(prices, np.ones(1), b, market_cfg.interval_h, BIDDING)
+    held = solve_sdp(prices, np.ones(1), b, market_cfg.interval_h, BIDDING, limits=limits)
+    assert held.at(0, battery_cfg.soc_init) < free.at(0, battery_cfg.soc_init)  # costs value
+    # below the band at a held stage is heavily penalised
+    assert held.at(31, 50.0) < held.at(31, 60.0) - 1000
+    for t in range(0, n, 6):
+        assert np.all(np.diff(held.water_value(t)) <= 1e-6)  # still concave

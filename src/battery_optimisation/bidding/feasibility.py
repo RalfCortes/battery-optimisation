@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+import numpy as np
+
 from battery_optimisation.battery import TOL, Battery
 from battery_optimisation.sim.clearing import IntervalOffers, Side, Tranche
 
@@ -63,6 +65,28 @@ def _cap(tranches: list[Tranche], max_mw: float) -> list[Tranche]:
     return out
 
 
+def caps_from_bounds(
+    offers: IntervalOffers,
+    low: float,
+    high: float,
+    battery: Battery,
+    dt: float,
+    max_discharge_mw: float | None = None,
+    max_charge_mw: float | None = None,
+) -> IntervalOffers:
+    """Cap discharge so SOC ``low`` can deliver it and charge so SOC ``high`` can absorb it
+    (and by the power limits given, e.g. what reserves leave); truncated in curve order."""
+    cfg = battery.config
+    p_dis = cfg.p_max_mw if max_discharge_mw is None else max_discharge_mw
+    p_ch = cfg.p_max_mw if max_charge_mw is None else max_charge_mw
+    max_discharge = max(0.0, min(p_dis, (low - cfg.soc_min) / battery.discharge_loss(dt)))
+    max_charge = max(0.0, min(p_ch, (cfg.soc_max - high) / battery.charge_gain(dt)))
+    tranches = _cap(offers.on(Side.DISCHARGE), max_discharge) + _cap(
+        offers.on(Side.CHARGE), max_charge
+    )
+    return offers.model_copy(update={"tranches": tuple(tranches)})
+
+
 def make_feasible(
     offers: IntervalOffers,
     soc_mwh: float,
@@ -72,14 +96,36 @@ def make_feasible(
     floor: float | None = None,
     cap: float | None = None,
 ) -> IntervalOffers:
-    cfg = battery.config
+    """Worst-case feasibility: whatever the pending offers clear, this one can be delivered."""
     low, high = soc_range_after(soc_mwh, pending, battery, dt, floor, cap)
-    max_discharge = max(0.0, min(cfg.p_max_mw, (low - cfg.soc_min) / battery.discharge_loss(dt)))
-    max_charge = max(0.0, min(cfg.p_max_mw, (cfg.soc_max - high) / battery.charge_gain(dt)))
-    tranches = _cap(offers.on(Side.DISCHARGE), max_discharge) + _cap(
-        offers.on(Side.CHARGE), max_charge
-    )
-    return offers.model_copy(update={"tranches": tuple(tranches)})
+    return caps_from_bounds(offers, low, high, battery, dt)
+
+
+def soc_quantiles_after(
+    soc_mwh: float,
+    pending: list[IntervalOffers],
+    prices: list[np.ndarray],
+    weights: list[np.ndarray],
+    battery: Battery,
+    dt: float,
+    q: float,
+) -> tuple[float, float]:
+    """(q, 1 - q) weighted quantiles of the SOC after the pending offers clear at their scenario
+    prices (``prices[i]``, ``weights[i]`` for pending interval i; intervals combined
+    independently, every combination enumerated)."""
+    socs, probs = np.array([soc_mwh]), np.array([1.0])
+    for offers, p, w in zip(pending, prices, weights, strict=True):
+        moves = []
+        for price in p:
+            charge, discharge = _cleared(offers, price)
+            moves.append(charge * battery.charge_gain(dt) - discharge * battery.discharge_loss(dt))
+        socs = (socs[:, None] + np.asarray(moves)[None, :]).ravel()
+        probs = (probs[:, None] * np.asarray(w, float)[None, :]).ravel()
+    order = np.argsort(socs)
+    socs, cum = socs[order], np.cumsum(probs[order]) / probs.sum()
+    low = socs[np.searchsorted(cum, q - 1e-12)]
+    high = socs[min(np.searchsorted(cum, 1 - q - 1e-12), len(socs) - 1)]
+    return float(low), float(high)
 
 
 def _cleared(offers: IntervalOffers, price: float) -> tuple[float, float]:

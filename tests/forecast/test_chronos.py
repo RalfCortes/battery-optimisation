@@ -8,6 +8,7 @@ from synthetic_forecast import at, make_features
 
 from battery_optimisation.columns import Col
 from battery_optimisation.config import Covariate, load_forecast
+from battery_optimisation.data.weather import feature_names
 from battery_optimisation.forecast.chronos import ChronosModel, build_input
 from battery_optimisation.forecast.covariates import COVARIATES, CovariateKind
 
@@ -28,10 +29,39 @@ def poisoned(features: pl.DataFrame, issued_at) -> pl.DataFrame:
     )
 
 
+class FrameWeather:
+    """Stand-in weather source: values from a frame (the as-of run in production)."""
+
+    def __init__(self, frame: pl.DataFrame, offset: float = 0.0) -> None:
+        self.frame, self.offset = frame, offset
+        self.calls: list = []
+
+    def for_issue(self, issued_at, stamps):
+        self.calls.append(issued_at)
+        cols = feature_names(load_forecast().weather)
+        rows = self.frame.filter(pl.col(Col.INTERVAL_START).is_in(list(stamps)))
+        return rows.select(Col.INTERVAL_START, *[pl.col(c) + self.offset for c in cols])
+
+
 def test_input_uses_only_information_before_issue(cfg) -> None:
     issued = at(date(2026, 1, 5))
-    features = poisoned(make_features(7), issued)
-    inp = build_input(features, issued, cfg)
+    clean = make_features(7)
+    features = poisoned(clean, issued)
+    wx_cols = feature_names(load_forecast().weather)
+    features = features.with_columns(  # future weather in the frame is NOT the as-of forecast
+        pl.when(pl.col(Col.INTERVAL_START) >= issued).then(POISON).otherwise(pl.col(c)).alias(c)
+        for c in wx_cols
+    )
+    source = FrameWeather(clean, offset=0.5)
+    inp = build_input(features, issued, cfg, source)
+    assert source.calls == [issued]
+    assert np.all(
+        inp.future_covariates[wx_cols[0]]
+        == clean.filter(pl.col(Col.INTERVAL_START) >= issued)[wx_cols[0]]
+        .head(len(inp.future_covariates[wx_cols[0]]))
+        .to_numpy()
+        + 0.5
+    )
 
     assert inp.issued_at == issued
     assert len(inp.target) == cfg.context_days * 48
@@ -53,16 +83,19 @@ def test_input_uses_only_information_before_issue(cfg) -> None:
 def test_input_respects_covariate_selection(cfg) -> None:
     issued = at(date(2026, 1, 5))
     only_calendar = cfg.model_copy(update={"covariates": [Covariate.CALENDAR]})
-    inp = build_input(make_features(7), issued, only_calendar)
+    inp = build_input(make_features(7), issued, only_calendar, None)
     assert set(inp.past_covariates) == set(COVARIATES[Covariate.CALENDAR].columns)
 
 
 def test_input_needs_full_history_and_horizon(cfg) -> None:
     features = make_features(7)
+    source = FrameWeather(features)
     with pytest.raises(ValueError, match="history"):
-        build_input(features, at(date(2026, 1, 2)), cfg)  # only 1 day of context
+        build_input(features, at(date(2026, 1, 2)), cfg, source)  # only 1 day of context
     with pytest.raises(ValueError, match="horizon"):
-        build_input(features, at(date(2026, 1, 7), 12), cfg)  # runs past the data
+        build_input(features, at(date(2026, 1, 7), 12), cfg, source)  # runs past the data
+    with pytest.raises(ValueError, match="weather"):
+        build_input(features, at(date(2026, 1, 5)), cfg, None)  # weather selected, no source
 
 
 class FakePipeline:
@@ -86,7 +119,7 @@ def test_forecast_frame_layout_and_batching(cfg) -> None:
     issues = [at(date(2026, 1, d)) for d in (5, 6, 7)]
     fake = FakePipeline()
     model = ChronosModel(cfg.model_copy(update={"batch_size": 2}), pipeline=fake)
-    qf = model.forecast_quantiles(features, issues)
+    qf = model.forecast_quantiles(features, issues, FrameWeather(features))
 
     assert fake.calls == [2, 1]
     q = len(cfg.quantile_levels)

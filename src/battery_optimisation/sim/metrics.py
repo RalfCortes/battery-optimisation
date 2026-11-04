@@ -37,6 +37,9 @@ class PeriodStats(BaseModel):
     discharged_mwh: float
     cycles: float  # equivalent full cycles
     mean_usep: float
+    ancillary_sgd: float = 0.0  # ancillary availability payments (in profit)
+    shortfall_mwh: float = 0.0  # cleared but not deliverable (probabilistic feasibility)
+    penalty_sgd: float = 0.0  # shortfall settled at the shortfall penalty price
 
 
 def _stats_exprs(battery: BatteryConfig, dt: float) -> list[pl.Expr]:
@@ -50,6 +53,9 @@ def _stats_exprs(battery: BatteryConfig, dt: float) -> list[pl.Expr]:
             Col.CYCLES
         ),
         pl.col(Col.USEP).mean().alias(Col.MEAN_USEP),
+        pl.col(Col.ANCILLARY_SGD).sum(),
+        (pl.col(Col.SHORTFALL_MW) * dt).sum().alias(Col.SHORTFALL_MWH),
+        pl.col(Col.PENALTY_SGD).sum(),
     ]
 
 

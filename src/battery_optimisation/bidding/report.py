@@ -21,13 +21,16 @@ from pydantic import BaseModel
 from battery_optimisation.bidding.strategy import Horizon, ScheduleStrategy, WaterValueStrategy
 from battery_optimisation.bidding.sweep import StepGap, SweepStats
 from battery_optimisation.columns import Col
-from battery_optimisation.config import BatteryConfig, BiddingConfig, MarketConfig
+from battery_optimisation.config import BatteryConfig, BiddingConfig, FeasibilityMode, MarketConfig
 from battery_optimisation.data.nems import TZ
+from battery_optimisation.forecast.base import Forecaster
+from battery_optimisation.forecast.baselines import WithAncillaryPersistence
 from battery_optimisation.forecast.perfect import PerfectForecaster
 from battery_optimisation.forecast.stored import QuantileForecaster
 from battery_optimisation.sim.backtest import RunSummary, StrategyName, run_strategy, save_run
 from battery_optimisation.sim.clearing import Side
 from battery_optimisation.sim.dispatch import Dispatch
+from battery_optimisation.sim.simulator import ShortfallPolicy
 
 
 class StrategyResult(BaseModel):
@@ -61,6 +64,9 @@ class BiddingReport(BaseModel):
     sdp_solve_time_s: float
     mean_tranches_per_interval: float  # offered, both sides
     price_taking_share: float  # share of offered MW made price-taking (floor / cap)
+    feasibility: str = "worst_case"  # FeasibilityMode used (+ margin, quantile in ``bidding``)
+    shortfall_mwh: float = 0.0  # water value: cleared but not deliverable
+    penalty_sgd: float = 0.0  # water value: shortfall penalties (already in its profit)
     sweep: SweepStats | None = None  # price-sweep sanity check of the submitted curves
     sweep_steps: list[StepGap] = []  # gap to the optimum after each pipeline step
 
@@ -93,22 +99,42 @@ def evaluate_bidding(
     battery: BatteryConfig,
     market: MarketConfig,
     bidding: BiddingConfig,
+    horizon: Horizon = Horizon.DAY,
+    history: pl.DataFrame | None = None,
+    ancillary: bool = False,
 ) -> BiddingEvaluation:
-    """Run perfect foresight (daily), self-schedule and water value over ``realised``'s window."""
-    prices = realised.select(Col.INTERVAL_START, Col.USEP).sort(Col.INTERVAL_START)
-    days = Horizon.DAY
-    water_value = WaterValueStrategy(scenarios, battery, market, bidding)
+    """Perfect foresight, self-schedule and water value over ``realised``'s window, all planned
+    with ``horizon`` (DAY for daily forecasts, ROLLING for intraday ones)."""
+    keep = [Col.INTERVAL_START, Col.USEP]
+    if ancillary:  # realised ancillary prices are traded; forecasts use persistence for them
+        keep += [c for c in realised.columns if c not in keep]
+    prices = realised.select(keep).sort(Col.INTERVAL_START)
+    days = horizon
+    water_value = WaterValueStrategy(scenarios, battery, market, bidding, ancillary=ancillary)
+    median: Forecaster = QuantileForecaster(quantiles, level=0.5)
+    if ancillary:
+        median = WithAncillaryPersistence(median)
     strategies = {
         StrategyName.PERFECT_FORESIGHT: ScheduleStrategy(
             PerfectForecaster(prices), battery, market, days
         ),
-        StrategyName.CHRONOS_MEDIAN: ScheduleStrategy(
-            QuantileForecaster(quantiles, level=0.5), battery, market, days
-        ),
+        StrategyName.CHRONOS_MEDIAN: ScheduleStrategy(median, battery, market, days),
         StrategyName.WATER_VALUE: water_value,
     }
+    probabilistic = bidding.feasibility.mode is FeasibilityMode.PROBABILISTIC
     runs = {
-        name: run_strategy(name, strategy, days, prices, battery, market)
+        name: run_strategy(
+            name,
+            strategy,
+            days,
+            prices,
+            battery,
+            market,
+            history=history,
+            on_shortfall=ShortfallPolicy.PENALISE
+            if name is StrategyName.WATER_VALUE and probabilistic
+            else ShortfallPolicy.RAISE,
+        )
         for name, strategy in strategies.items()
     }
     perfect = runs[StrategyName.PERFECT_FORESIGHT][0].total.profit_sgd
@@ -151,6 +177,9 @@ def evaluate_bidding(
         sdp_solve_time_s=water_value.solve_time_s,
         mean_tranches_per_interval=n_tranches,
         price_taking_share=sure_share,
+        feasibility=str(bidding.feasibility.mode),
+        shortfall_mwh=wv.total.shortfall_mwh,
+        penalty_sgd=wv.total.penalty_sgd,
     )
     return BiddingEvaluation(report=report, runs=runs, water_value=water_value)
 
@@ -183,11 +212,14 @@ def comparison_table(rows: list[ComparisonInput], baseline: StrategyName) -> pl.
     """One row per (strategy, horizon): profit, cycles, capture vs both perfect-foresight
     benchmarks, and difference to the ``baseline`` strategy (SGD and share of its profit)."""
 
-    def profit(name: StrategyName, horizon: Horizon | None = None) -> float:
+    def profit(name: StrategyName, horizon: Horizon | None = None) -> float | None:
         return next(
-            r.profit_sgd
-            for r in rows
-            if r.strategy is name and (horizon is None or r.horizon is horizon)
+            (
+                r.profit_sgd
+                for r in rows
+                if r.strategy is name and (horizon is None or r.horizon is horizon)
+            ),
+            None,
         )
 
     pf_full = profit(StrategyName.PERFECT_FORESIGHT, Horizon.FULL)
@@ -200,8 +232,8 @@ def comparison_table(rows: list[ComparisonInput], baseline: StrategyName) -> pl.
                 "horizon": str(r.horizon),
                 "profit_sgd": r.profit_sgd,
                 "cycles_per_day": r.cycles_per_day,
-                "capture_vs_perfect_full": r.profit_sgd / pf_full,
-                "capture_vs_perfect_day": r.profit_sgd / pf_day,
+                "capture_vs_perfect_full": r.profit_sgd / pf_full if pf_full else None,
+                "capture_vs_perfect_day": r.profit_sgd / pf_day if pf_day else None,
                 "vs_baseline_sgd": r.profit_sgd - base,
                 "vs_baseline_pct": (r.profit_sgd - base) / abs(base) if base else float("nan"),
             }

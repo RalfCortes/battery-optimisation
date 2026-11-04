@@ -16,18 +16,39 @@ class PersistenceForecaster:
 
     max_days_back: int = 7
 
+    def __init__(self, strict: bool = True) -> None:
+        # strict: raise when a price is unknown; otherwise use the history's mean (0 if none)
+        self.strict = strict
+
     def forecast(self, view: MarketView, end: datetime) -> pl.DataFrame:
         history = view.history()
         target = pl.datetime_range(
             view.now, end, timedelta(minutes=30), time_unit="us", eager=True
         ).alias(Col.INTERVAL_START)
-        out = target.to_frame().with_columns(pl.lit(None, pl.Float64).alias(Col.USEP))
+        cols = [c for c in history.columns if c != Col.INTERVAL_START]  # USEP + ancillary prices
+        out = target.to_frame().with_columns(pl.lit(None, pl.Float64).alias(c) for c in cols)
         for days in range(1, self.max_days_back + 1):  # nearest known day first
             lagged = history.with_columns(pl.col(Col.INTERVAL_START).dt.offset_by(f"{days}d"))
             out = out.join(lagged, on=Col.INTERVAL_START, how="left", suffix="_lag").select(
-                Col.INTERVAL_START,
-                pl.coalesce(Col.USEP, f"{Col.USEP}_lag").alias(Col.USEP),
+                Col.INTERVAL_START, *[pl.coalesce(c, f"{c}_lag").alias(c) for c in cols]
             )
         if out[Col.USEP].null_count():
-            raise ValueError(f"persistence has no known price for some of {view.now}..{end}")
+            if self.strict:
+                raise ValueError(f"persistence has no known price for some of {view.now}..{end}")
+            out = out.with_columns(
+                pl.col(c).fill_null(history[c].mean() if history.height else 0.0) for c in cols
+            )
         return out
+
+
+class WithAncillaryPersistence:
+    """Energy from ``energy`` (e.g. the Chronos median), ancillary prices by persistence:
+    ancillary prices are not forecast yet."""
+
+    def __init__(self, energy) -> None:
+        self.energy = energy
+
+    def forecast(self, view: MarketView, end: datetime) -> pl.DataFrame:
+        energy = self.energy.forecast(view, end).select(Col.INTERVAL_START, Col.USEP)
+        ancillary = PersistenceForecaster().forecast(view, end).drop(Col.USEP)
+        return energy.join(ancillary, on=Col.INTERVAL_START, how="left")

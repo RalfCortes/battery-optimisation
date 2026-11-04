@@ -21,7 +21,7 @@ import polars as pl
 import structlog
 
 from battery_optimisation.columns import Col
-from battery_optimisation.config import Device, ForecastConfig
+from battery_optimisation.config import Covariate, Device, ForecastConfig
 from battery_optimisation.data.nems import PERIODS_PER_DAY
 from battery_optimisation.forecast.covariates import COVARIATES, CovariateKind
 from battery_optimisation.forecast.quantiles import rearrange
@@ -58,8 +58,22 @@ def _values(frame: pl.DataFrame, col: str) -> np.ndarray:
     return frame[col].cast(pl.Float64).fill_null(float("nan")).to_numpy()
 
 
-def build_input(features: pl.DataFrame, issued_at: datetime, cfg: ForecastConfig) -> ForecastInput:
-    """Model input for one issue time, from data strictly before it (plus KNOWN covariates)."""
+class WeatherSource(Protocol):
+    """Horizon weather for an issue (``data.weather.WeatherTrajectories``: the as-of run)."""
+
+    def for_issue(self, issued_at: datetime, stamps: list[datetime]) -> pl.DataFrame: ...
+
+
+def build_input(
+    features: pl.DataFrame,
+    issued_at: datetime,
+    cfg: ForecastConfig,
+    weather: WeatherSource | None,
+) -> ForecastInput:
+    """Model input for one issue time, from data strictly before it (plus KNOWN covariates).
+
+    Weather over the horizon comes from ``weather`` (the run usable at the issue time), never
+    from ``features``, whose weather columns are the daily as-of values (context only)."""
     n_ctx = cfg.context_days * PERIODS_PER_DAY
     horizon = cfg.issue_lead_intervals + cfg.prediction_length  # issue time -> end of the day
     ts = pl.col(Col.INTERVAL_START)
@@ -70,11 +84,17 @@ def build_input(features: pl.DataFrame, issued_at: datetime, cfg: ForecastConfig
     if future.height != horizon:
         raise ValueError(f"forecast horizon from {issued_at} not covered by the features")
     past, known = covariate_columns(cfg)
+    future = future.sort(Col.INTERVAL_START)
+    if Covariate.WEATHER in cfg.covariates:
+        if weather is None:
+            raise ValueError("weather covariates selected but no weather source for the horizon")
+        wx = weather.for_issue(issued_at, future[Col.INTERVAL_START].to_list())
+        future = future.drop(wx.columns[1:], strict=False).join(wx, on=Col.INTERVAL_START)
     return ForecastInput(
         issued_at=issued_at,
         target=_values(context, Col.USEP),
         past_covariates={c: _values(context, c) for c in past},
-        future_covariates={c: _values(future.sort(Col.INTERVAL_START), c) for c in known},
+        future_covariates={c: _values(future, c) for c in known},
     )
 
 
@@ -107,13 +127,18 @@ class ChronosModel:
             )
         return self._pipeline
 
-    def forecast_quantiles(self, features: pl.DataFrame, issues: list[datetime]) -> pl.DataFrame:
+    def forecast_quantiles(
+        self,
+        features: pl.DataFrame,
+        issues: list[datetime],
+        weather: WeatherSource | None = None,
+    ) -> pl.DataFrame:
         cfg = self.cfg
         levels = np.asarray(cfg.quantile_levels)
         frames = []
         t0 = time.perf_counter()
         for b in range(0, len(issues), cfg.batch_size):
-            batch = [build_input(features, t, cfg) for t in issues[b : b + cfg.batch_size]]
+            batch = [build_input(features, t, cfg, weather) for t in issues[b : b + cfg.batch_size]]
             gap = cfg.issue_lead_intervals
             quantiles, _ = self.pipeline.predict_quantiles(
                 [inp.to_chronos() for inp in batch],

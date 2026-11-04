@@ -21,7 +21,7 @@ START = date(2026, 1, 1)
 @pytest.fixture(scope="module")
 def report_and_runs():
     rng = np.random.default_rng(7)
-    cfg = load_forecast()
+    cfg = load_forecast().model_copy(update={"issue_every_intervals": 48})  # daily issues
     cfg = cfg.model_copy(
         update={
             "scenarios": cfg.scenarios.model_copy(

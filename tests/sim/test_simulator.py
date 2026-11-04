@@ -82,3 +82,23 @@ def test_offers_are_fixed_at_gate_closure(market_cfg, battery_cfg) -> None:
         assert last_seen is None or last_seen < decided
         # SOC known at the decision: start of interval j - gate (window start for the first ones)
         assert soc == pytest.approx(battery_cfg.soc_init + max(j - gate, 0) * gain)
+
+
+def test_shortfall_is_penalised_instead_of_raising(market_cfg, battery_cfg) -> None:
+    from battery_optimisation.sim.simulator import ShortfallPolicy
+
+    m = Market(market_cfg, make_prices([100.0] * 3))
+    strategy = FixedStrategy([0.0] * 3, [100.0] * 3, market_cfg)  # 50 MWh cannot cover it
+    dispatch = Simulator(m, Battery(battery_cfg), on_shortfall=ShortfallPolicy.PENALISE).run(
+        strategy
+    )
+    frame = dispatch.frame
+    assert frame[Col.SOC_MWH].min() >= battery_cfg.soc_min - 1e-9  # physics always respected
+    shortfall_mwh = (frame[Col.SHORTFALL_MW] * market_cfg.interval_h).sum()
+    assert shortfall_mwh > 0
+    assert frame[Col.PENALTY_SGD].sum() == pytest.approx(
+        shortfall_mwh * market_cfg.shortfall_penalty_sgd_per_mwh
+    )
+    delivered = (frame[Col.DISCHARGE_MW] * market_cfg.interval_h).sum()
+    assert delivered + shortfall_mwh == pytest.approx(3 * 100.0 * market_cfg.interval_h)
+    assert dispatch.total().shortfall_mwh == pytest.approx(shortfall_mwh)

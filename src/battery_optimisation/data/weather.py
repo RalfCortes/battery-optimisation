@@ -26,6 +26,7 @@ Command line: ``uv run weather download`` / ``uv run weather process``.
 
 from __future__ import annotations
 
+import bisect
 import json
 import time
 from datetime import UTC, date, datetime, timedelta
@@ -234,24 +235,54 @@ def parse_run(text: str, run: datetime, points: list[Point], cfg: WeatherConfig)
     )
 
 
+RATE_LIMITED = 429
+BACKOFF_S = (60.0, 300.0, 900.0, 3600.0)  # waits after successive 429 answers
+
+
+SERVER_RETRIES_S = (10.0, 60.0)  # waits after 5xx answers before giving up on a run
+
+
+def _get_with_backoff(session: requests.Session, params: dict[str, str]) -> requests.Response:
+    """GET, waiting longer after each 429 (Open-Meteo limits per minute, hour and day) and
+    retrying a few times on 5xx."""
+    server_waits = list(SERVER_RETRIES_S)
+    for wait in (*BACKOFF_S, None):
+        resp = session.get(SINGLE_RUNS_URL, params=params, timeout=180)
+        while resp.status_code >= 500 and server_waits:
+            time.sleep(server_waits.pop(0))
+            resp = session.get(SINGLE_RUNS_URL, params=params, timeout=180)
+        if resp.status_code != RATE_LIMITED or wait is None:
+            return resp
+        log.warning("weather.rate_limited", run=params.get("run"), wait_s=wait)
+        time.sleep(wait)
+    return resp
+
+
 def download_runs(
     runs: list[datetime],
     cfg: WeatherConfig,
     model: str,
     raw_dir: Path = DEFAULT_RAW_DIR,
     overwrite: bool = False,
-    pause_s: float = 0.2,
+    pause_s: float = 1.2,
 ) -> list[Path]:
-    """One file per run; existing files are skipped (resumable). Unavailable runs are logged."""
+    """One file per run; existing files are skipped (resumable). Unavailable runs are logged.
+
+    ``pause_s`` keeps a 9-point request (counted as 9 calls) under 600 calls per minute."""
     written = []
     with requests.Session() as session:
         for run in runs:
             path = run_path(run, model, raw_dir)
             if path.exists() and not overwrite:
                 continue
-            resp = session.get(SINGLE_RUNS_URL, params=request_params(run, cfg, model), timeout=180)
+            resp = _get_with_backoff(session, request_params(run, cfg, model))
             if resp.status_code == 400 and "not available" in resp.text:
                 log.warning("weather.run_unavailable", model=model, run=run.isoformat())
+                continue
+            if resp.status_code >= 500:  # still failing after retries: skip, a later run retries
+                log.error(
+                    "weather.run_failed", model=model, run=run.isoformat(), status=resp.status_code
+                )
                 continue
             resp.raise_for_status()
             df = parse_run(resp.text, run, cfg.points, cfg)
@@ -299,10 +330,10 @@ def _fill_short_gaps(s: pl.Series, max_gap: int) -> pl.Series:
     )[s.name]
 
 
-def to_features(
+def _process_runs(
     raw: pl.DataFrame, fcfg: ForecastConfig, start: date, end: date
 ) -> tuple[pl.DataFrame, WeatherProcessingReport]:
-    """Raw run trajectories -> as-of 30-min features for the days ``start``..``end``."""
+    """Steps raw -> regrid -> gap_fill -> aggregate: long 30-min values per run and point."""
     cfg = fcfg.weather
     keys = [Col.RUN_TIME, Col.LATITUDE, Col.LONGITUDE]
     cols = [COLUMN[v] for v in cfg.variables]
@@ -398,7 +429,17 @@ def to_features(
             values_missing_after=_null_counts(complete, cfg),
         )
     )
+    return complete, report
 
+
+def to_features(
+    raw: pl.DataFrame, fcfg: ForecastConfig, start: date, end: date
+) -> tuple[pl.DataFrame, WeatherProcessingReport]:
+    """Raw run trajectories -> as-of 30-min features for the days ``start``..``end`` (each day
+    from the run usable at its daily forecast issue time). Context covariates."""
+    cfg = fcfg.weather
+    cols = [COLUMN[v] for v in cfg.variables]
+    complete, report = _process_runs(raw, fcfg, start, end)
     days = [start + timedelta(days=d) for d in range((end - start).days + 1)]
     choice = pl.DataFrame(
         {
@@ -496,3 +537,67 @@ def load_weather(processed_dir: Path = DEFAULT_PROCESSED_DIR) -> pl.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"{path} missing; run `uv run weather process`")
     return pl.read_parquet(path)
+
+
+class WeatherTrajectories:
+    """Each run's processed 30-min trajectory (wide, one column per variable and point), to give
+    a forecast issued at T the weather of the run usable at T (``asof_run``): horizon covariates
+    for intraday issues."""
+
+    def __init__(self, per_run: dict[datetime, pl.DataFrame], cfg: WeatherConfig) -> None:
+        self._per_run, self.cfg = per_run, cfg
+        self._sorted = sorted(per_run)
+        self.fallbacks = 0  # issues served by an older run because the as-of one is missing
+
+    @classmethod
+    def from_raw(cls, raw: pl.DataFrame, fcfg: ForecastConfig) -> WeatherTrajectories:
+        cfg = fcfg.weather
+        stamps = raw[Col.INTERVAL_START]
+        complete, _ = _process_runs(raw, fcfg, stamps.min().date(), stamps.max().date())
+        per_run: dict[datetime, pl.DataFrame] = {}
+        for (run,), part in complete.group_by(Col.RUN_TIME, maintain_order=True):
+            wide = None
+            for (lat, lon), point in part.group_by(
+                Col.LATITUDE, Col.LONGITUDE, maintain_order=True
+            ):
+                point = point.select(
+                    Col.INTERVAL_START, *[COLUMN[v] for v in cfg.variables]
+                ).rename({COLUMN[v]: feature_name(v, (lat, lon)) for v in cfg.variables})
+                wide = (
+                    point
+                    if wide is None
+                    else wide.join(point, on=Col.INTERVAL_START, how="full", coalesce=True)
+                )
+            per_run[run] = wide.sort(Col.INTERVAL_START)
+        return cls(per_run, cfg)
+
+    @property
+    def runs(self) -> list[datetime]:
+        return sorted(self._per_run)
+
+    def for_issue(self, issued_at: datetime, stamps: list[datetime]) -> pl.DataFrame:
+        """Values of the run usable at ``issued_at`` for ``stamps`` (``Col.INTERVAL_START`` +
+        feature columns). Raises if that run is missing or does not cover the stamps."""
+        run = asof_run(issued_at, self.cfg)
+        # latest downloaded run that was usable at the issue time (normally the as-of run)
+        i = bisect.bisect_right(self._sorted, run)
+        if i == 0:
+            raise ValueError(f"no weather run usable at {issued_at} (as-of run {run})")
+        key = self._sorted[i - 1]
+        if key != run:
+            self.fallbacks += 1
+        rows = (
+            pl.DataFrame({Col.INTERVAL_START: stamps})
+            .with_columns(
+                pl.col(Col.INTERVAL_START).dt.cast_time_unit("us").dt.convert_time_zone(TZ)
+            )
+            .join(self._per_run[key], on=Col.INTERVAL_START, how="left")
+        )
+        if rows.height != len(stamps) or rows.select(
+            pl.exclude(Col.INTERVAL_START)
+        ).null_count().sum_horizontal().item() == rows.height * (rows.width - 1):
+            raise ValueError(f"weather run {run} does not cover {stamps[0]}..{stamps[-1]}")
+        for name in feature_names(self.cfg):
+            if name not in rows.columns:
+                rows = rows.with_columns(pl.lit(None, pl.Float64).alias(name))
+        return rows.select(Col.INTERVAL_START, *feature_names(self.cfg))

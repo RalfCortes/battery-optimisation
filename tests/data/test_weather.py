@@ -35,10 +35,12 @@ def sgt(y, m, d, h=0, mi=0) -> datetime:
 def test_asof_run_respects_publication_delay() -> None:
     issue = sgt(2026, 1, 2)  # = 2026-01-01 16:00 UTC
     assert weather.asof_run(issue, CFG) == utc(2026, 1, 1, 6)  # 06Z + 8 h = 14Z <= 16Z; 12Z is not
-    quick = CFG.model_copy(update={"availability_delay_h": 4})
+    quick = CFG.model_copy(update={"availability_delay_h": 4, "run_hours_utc": [0, 6, 12, 18]})
     assert weather.asof_run(issue, quick) == utc(2026, 1, 1, 12)  # 12Z + 4 h = 16Z: just usable
     # 16:52 SGT = 08:52Z; minus 8 h = 00:52Z -> the 00Z run of the same day
-    assert weather.asof_run(sgt(2026, 1, 1, 16, 52), CFG) == utc(2026, 1, 1, 0)
+    every6h = CFG.model_copy(update={"run_hours_utc": [0, 6, 12, 18]})
+    assert weather.asof_run(sgt(2026, 1, 1, 16, 52), every6h) == utc(2026, 1, 1, 0)
+    assert weather.asof_run(sgt(2026, 1, 1, 16, 52), CFG) == utc(2025, 12, 31, 18)  # 06Z/18Z only
 
 
 def test_needed_runs_one_per_issue_day() -> None:
@@ -168,3 +170,86 @@ def test_feature_names_follow_config() -> None:
 def test_raw_runs_are_kept_per_provider(tmp_path) -> None:
     path = weather.run_path(utc(2026, 1, 1, 6), "icon_global", tmp_path)
     assert path == tmp_path / "icon_global" / "2026-01" / "20260101T06.parquet"
+
+
+def test_trajectory_for_an_issue_comes_from_its_asof_run() -> None:
+    """Intraday issues: the horizon weather is the run usable at the issue time itself."""
+    cfg = one_point()
+    fcfg = FCFG.model_copy(update={"weather": cfg})
+    runs = {utc(2026, 1, 1, 6): 0.0, utc(2026, 1, 1, 18): 1000.0}
+    wx = weather.WeatherTrajectories.from_raw(raw_runs(runs, cfg), fcfg)
+    stamps = [sgt(2026, 1, 2, 12), sgt(2026, 1, 2, 12, 30)]
+    early = wx.for_issue(sgt(2026, 1, 2, 9), stamps)  # 01Z - 8 h -> 06Z Jan 1
+    late = wx.for_issue(sgt(2026, 1, 2, 10), stamps)  # 02Z - 8 h -> 18Z Jan 1
+    col = feature_name(WeatherVar.TEMPERATURE, P0)
+    assert early[col].max() < 1000 <= late[col].min()
+    assert early[Col.INTERVAL_START].to_list() == stamps
+    with pytest.raises(ValueError, match="run"):
+        wx.for_issue(sgt(2026, 1, 1, 12), stamps)  # usable run (18Z Dec 31) not downloaded
+
+
+def test_missing_run_falls_back_to_an_older_usable_one() -> None:
+    cfg = one_point()
+    fcfg = FCFG.model_copy(update={"weather": cfg})
+    wx = weather.WeatherTrajectories.from_raw(raw_runs({utc(2026, 1, 1, 6): 0.0}, cfg), fcfg)
+    stamps = [sgt(2026, 1, 2, 12)]
+    # at 10:00 the 18Z run is the as-of one, but it is missing: the 06Z run is used
+    out = wx.for_issue(sgt(2026, 1, 2, 10), stamps)
+    assert out[feature_name(WeatherVar.TEMPERATURE, P0)][0] < 1000
+    assert wx.fallbacks == 1
+    # never a run that was not yet usable: 06Z Jan 2 is usable from 22:00 SGT only
+    later = weather.WeatherTrajectories.from_raw(raw_runs({utc(2026, 1, 2, 6): 5.0}, cfg), fcfg)
+    with pytest.raises(ValueError, match="run"):
+        later.for_issue(sgt(2026, 1, 2, 21), stamps)
+
+
+def test_download_backs_off_when_rate_limited(tmp_path, monkeypatch) -> None:
+    import requests
+
+    calls, sleeps = [], []
+
+    class Resp:
+        def __init__(self, status: int) -> None:
+            self.status_code, self.text = (
+                status,
+                run_payload(utc(2026, 1, 1, 6), lambda v, t: 1.0, CFG.points),
+            )
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                raise requests.HTTPError(str(self.status_code))
+
+    statuses = iter([429, 429, 200])
+
+    def fake_get(self, url, params=None, timeout=None):
+        calls.append(params["run"])
+        return Resp(next(statuses))
+
+    monkeypatch.setattr(requests.Session, "get", fake_get)
+    monkeypatch.setattr(weather.time, "sleep", lambda s: sleeps.append(s))
+    written = weather.download_runs([utc(2026, 1, 1, 6)], CFG, "ecmwf_ifs", tmp_path)
+    assert len(written) == 1 and len(calls) == 3
+    assert sleeps[0] < sleeps[1]  # backoff grows
+
+
+def test_download_skips_a_run_the_server_fails_on(tmp_path, monkeypatch) -> None:
+    import requests
+
+    class Resp:
+        def __init__(self, status: int) -> None:
+            self.status_code = status
+            self.text = run_payload(utc(2026, 1, 1, 6), lambda v, t: 1.0, CFG.points)
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                raise requests.HTTPError(str(self.status_code))
+
+    def fake_get(self, url, params=None, timeout=None):
+        return Resp(500 if params["run"] == "2026-01-01T06:00" else 200)
+
+    monkeypatch.setattr(requests.Session, "get", fake_get)
+    monkeypatch.setattr(weather.time, "sleep", lambda s: None)
+    written = weather.download_runs(
+        [utc(2026, 1, 1, 6), utc(2026, 1, 1, 18)], CFG, "ecmwf_ifs", tmp_path
+    )
+    assert [p.name for p in written] == ["20260101T18.parquet"]  # the failing run is skipped

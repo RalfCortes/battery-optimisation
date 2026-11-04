@@ -16,7 +16,8 @@ from battery_optimisation.sim.clearing import MarketView
 
 class PerfectForecaster:
     def __init__(self, realised: pl.DataFrame) -> None:
-        self._prices = realised.select(Col.INTERVAL_START, Col.USEP).sort(Col.INTERVAL_START)
+        # USEP and any ancillary price columns it was given
+        self._prices = realised.sort(Col.INTERVAL_START)
 
     def forecast(self, view: MarketView, end: datetime) -> pl.DataFrame:
         return self._prices.filter(pl.col(Col.INTERVAL_START).is_between(view.now, end))

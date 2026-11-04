@@ -54,12 +54,20 @@ from battery_optimisation.sim.metrics import seasonal_naive_mae
 _SGT = ZoneInfo(TZ)
 
 RunKey = tuple[StrategyName, Horizon]
-RUNS: list[RunKey] = [
-    (StrategyName.PERFECT_FORESIGHT, Horizon.FULL),
-    (StrategyName.PERFECT_FORESIGHT, Horizon.DAY),
-    (StrategyName.CHRONOS_MEDIAN, Horizon.DAY),
-    (StrategyName.PERSISTENCE, Horizon.DAY),
-]
+
+
+def schedule_horizon(cfg: ForecastConfig, market: MarketConfig) -> Horizon:
+    """Re-plan with every forecast: rolling for intraday issues, per day for daily issues."""
+    return Horizon.DAY if cfg.issue_every_intervals >= market.intervals_per_day else Horizon.ROLLING
+
+
+def runs_for(horizon: Horizon) -> list[RunKey]:
+    """Benchmarks (perfect foresight: full, daily, and the strategies' horizon) + strategies."""
+    perfect = [Horizon.FULL, Horizon.DAY] + ([horizon] if horizon is Horizon.ROLLING else [])
+    return [(StrategyName.PERFECT_FORESIGHT, h) for h in perfect] + [
+        (StrategyName.CHRONOS_MEDIAN, horizon),
+        (StrategyName.PERSISTENCE, horizon),
+    ]
 
 
 class CaptureStats(BaseModel):
@@ -70,6 +78,7 @@ class CaptureStats(BaseModel):
     cycles_per_day: float
     capture_vs_perfect_full: float
     capture_vs_perfect_day: float
+    capture_vs_perfect_same: float | None = None  # vs perfect foresight planned the same way
 
 
 class ForecastReport(BaseModel):
@@ -146,30 +155,37 @@ def evaluate(
         )
         scen_frames.append(month_scenarios(qf, realised, m_start, m_end, cfg, copula))
 
+    horizon = schedule_horizon(cfg, market)
     forecasters = {
         StrategyName.PERFECT_FORESIGHT: PerfectForecaster(window),
         StrategyName.CHRONOS_MEDIAN: QuantileForecaster(qf_test, level=0.5),
         StrategyName.PERSISTENCE: PersistenceForecaster(),
     }
     runs = {
-        (name, horizon): run_schedule(
-            name, forecasters[name], window, battery, market, horizon, history=history
+        (name, h): run_schedule(
+            name, forecasters[name], window, battery, market, h, history=history
         )
-        for name, horizon in RUNS
+        for name, h in runs_for(horizon)
     }
     pf_full = runs[(StrategyName.PERFECT_FORESIGHT, Horizon.FULL)][0].total.profit_sgd
     pf_day = runs[(StrategyName.PERFECT_FORESIGHT, Horizon.DAY)][0].total.profit_sgd
+    pf_same = {
+        h: runs[(StrategyName.PERFECT_FORESIGHT, h)][0].total.profit_sgd
+        for (name, h) in runs
+        if name is StrategyName.PERFECT_FORESIGHT
+    }
     capture = [
         CaptureStats(
             strategy=name,
-            horizon=horizon,
+            horizon=h,
             run=summary.name,
             profit_sgd=summary.total.profit_sgd,
             cycles_per_day=summary.cycles_per_day,
             capture_vs_perfect_full=summary.total.profit_sgd / pf_full,
             capture_vs_perfect_day=summary.total.profit_sgd / pf_day,
+            capture_vs_perfect_same=summary.total.profit_sgd / pf_same[h],
         )
-        for (name, horizon), (summary, _) in runs.items()
+        for (name, h), (summary, _) in runs.items()
     ]
     report = ForecastReport(
         created_at=datetime.now(_SGT),

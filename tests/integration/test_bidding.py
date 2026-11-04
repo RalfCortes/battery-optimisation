@@ -178,3 +178,105 @@ def test_sweep_breakdown_by_pipeline_step(battery_cfg, market_cfg) -> None:
     )
     # replaying every step reproduces exactly what was submitted
     assert gaps[CurveStep.FEASIBLE] == pytest.approx(stats.mean_abs_gap_in_band_mw)
+
+
+def test_water_value_uses_one_sdp_per_forecast_issue(battery_cfg, market_cfg) -> None:
+    """Intraday issues: each decision uses the latest issue (its own SDP); daily issues: one."""
+    prices = make_prices(daily_shape(1, seed=6))
+    gap = market_cfg.gate_closure_intervals
+    issues = []
+    for k in range(48):  # one issue per decision, covering the next 48 intervals (clipped)
+        part = prices.slice(k)
+        frame = scenario_frame(part, n=1, noise=0.0, gap=gap, seed=0)
+        first = part[Col.INTERVAL_START][0]
+        issues.append(
+            frame.with_columns(
+                pl.lit(first - timedelta(minutes=30 * gap))
+                .dt.cast_time_unit("us")
+                .alias(Col.ISSUED_AT)
+            )
+        )
+    scen = pl.concat(issues)
+    strategy = WaterValueStrategy(scen, battery_cfg, market_cfg, load_bidding())
+    bid = run(strategy, prices, battery_cfg, market_cfg)
+    assert strategy.n_plans == 48
+    pf = run(
+        ScheduleStrategy(PerfectForecaster(prices), battery_cfg, market_cfg, Horizon.DAY),
+        prices,
+        battery_cfg,
+        market_cfg,
+    )
+    assert bid.profit_sgd == pytest.approx(pf.profit_sgd, rel=0.05)
+
+
+def test_probabilistic_feasibility_offers_more_and_reports_shortfall(
+    battery_cfg, market_cfg
+) -> None:
+    from battery_optimisation.config import FeasibilityMode
+    from battery_optimisation.sim.simulator import ShortfallPolicy
+
+    prices = make_prices(daily_shape(DAYS, seed=4))
+    scen = scenario_frame(prices, n=20, noise=80.0, gap=market_cfg.gate_closure_intervals, seed=1)
+    worst_cfg = load_bidding()
+    prob_cfg = worst_cfg.model_copy(
+        update={
+            "feasibility": worst_cfg.feasibility.model_copy(
+                update={"mode": FeasibilityMode.PROBABILISTIC}
+            )
+        }
+    )
+    worst = WaterValueStrategy(scen, battery_cfg, market_cfg, worst_cfg)
+    run(worst, prices, battery_cfg, market_cfg)
+    prob = WaterValueStrategy(scen, battery_cfg, market_cfg, prob_cfg)
+    dispatch = Simulator(
+        Market(market_cfg, prices), Battery(battery_cfg), on_shortfall=ShortfallPolicy.PENALISE
+    ).run(prob)
+
+    def offered(strategy) -> float:
+        return sum(t.quantity_mw for o in strategy.submitted.values() for t in o.tranches)
+
+    assert offered(prob) > offered(worst)
+    frame = dispatch.frame
+    assert frame[Col.SOC_MWH].min() >= battery_cfg.soc_min - 1e-6
+    assert frame[Col.SOC_MWH].max() <= battery_cfg.soc_max + 1e-6
+    total = dispatch.total()
+    assert total.penalty_sgd == pytest.approx(
+        total.shortfall_mwh * market_cfg.shortfall_penalty_sgd_per_mwh
+    )
+
+
+def test_water_value_with_ancillary_services(battery_cfg, market_cfg) -> None:
+    """Ancillary commitments from a plan, energy curves within the headroom left: no limit or
+    sustainability breach (the simulator raises), ancillary revenue earned, more profit than
+    energy-only bidding when reserves pay well."""
+    from battery_optimisation.config import Product
+    from battery_optimisation.sim.clearing import price_column
+
+    rng = np.random.default_rng(0)
+    base = make_prices(daily_shape(DAYS + 1, seed=4))
+    prices = base.with_columns(
+        pl.Series(price_column(Product.REGULATION, market_cfg), rng.uniform(15, 35, base.height)),
+        pl.Series(
+            price_column(Product.PRIMARY_RESERVE, market_cfg), rng.uniform(5, 15, base.height)
+        ),
+        pl.Series(
+            price_column(Product.CONTINGENCY_RESERVE, market_cfg), rng.uniform(10, 30, base.height)
+        ),
+    )
+    history, window = prices.slice(0, 48), prices.slice(48)
+    scen = scenario_frame(
+        window.select(Col.INTERVAL_START, Col.USEP),
+        n=10,
+        noise=40.0,
+        gap=market_cfg.gate_closure_intervals,
+        seed=2,
+    )
+
+    def run_hist(strategy):
+        return Simulator(Market(market_cfg, window, history), Battery(battery_cfg)).run(strategy)
+
+    energy_only = run_hist(WaterValueStrategy(scen, battery_cfg, market_cfg, load_bidding()))
+    both = WaterValueStrategy(scen, battery_cfg, market_cfg, load_bidding(), ancillary=True)
+    dispatch = run_hist(both)
+    assert dispatch.total().ancillary_sgd > 0
+    assert dispatch.profit_sgd > energy_only.profit_sgd

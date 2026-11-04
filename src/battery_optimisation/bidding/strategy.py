@@ -8,27 +8,54 @@ self-schedule baseline from CLAUDE.md.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+import bisect
+from datetime import datetime, time, timedelta
 from enum import StrEnum
+from types import SimpleNamespace
 
 import numpy as np
 import polars as pl
 
-from battery_optimisation.battery import Battery
+from battery_optimisation.battery import TOL, Battery
 from battery_optimisation.bidding.compress import compress
-from battery_optimisation.bidding.feasibility import expected_soc_after, make_feasible
+from battery_optimisation.bidding.feasibility import (
+    caps_from_bounds,
+    expected_soc_after,
+    make_feasible,
+    soc_quantiles_after,
+    soc_range_after,
+)
 from battery_optimisation.bidding.water_value import (
     offer_curve,
     price_take_beyond_band,
     trim_to_band,
 )
 from battery_optimisation.columns import Col
-from battery_optimisation.config import BatteryConfig, BiddingConfig, MarketConfig
+from battery_optimisation.config import (
+    LOWER_PRODUCTS,
+    RAISE_PRODUCTS,
+    BatteryConfig,
+    BiddingConfig,
+    FeasibilityMode,
+    MarketConfig,
+    Product,
+)
 from battery_optimisation.forecast.base import Forecaster
+from battery_optimisation.forecast.baselines import PersistenceForecaster
 from battery_optimisation.optim.milp import MilpSolution, solve_schedule
-from battery_optimisation.optim.sdp import ValueFunction, solve_sdp
-from battery_optimisation.sim.clearing import IntervalOffers, MarketView
-from battery_optimisation.timing import day_start
+from battery_optimisation.optim.sdp import StageLimits, ValueFunction, solve_sdp
+from battery_optimisation.sim.clearing import (
+    AWARD_COLUMN,
+    AncillaryTranche,
+    IntervalOffers,
+    MarketView,
+    price_column,
+)
+
+
+def AWARD_PRICE_COLUMNS(market: MarketConfig) -> list[str]:  # noqa: N802
+    """Price columns of the enabled ancillary products."""
+    return [price_column(p, market) for p in market.ancillary_products]
 
 
 class Horizon(StrEnum):
@@ -36,6 +63,7 @@ class Horizon(StrEnum):
 
     FULL = "full"  # one plan to the end of the simulation: with perfect forecast, the true optimum
     DAY = "day"  # re-plan at the start of each day, to the end of that day
+    ROLLING = "rolling"  # re-plan at every decision, over the next day's worth of intervals
 
 
 class ScheduleStrategy:
@@ -52,7 +80,8 @@ class ScheduleStrategy:
         self.horizon = horizon
         self.plans: list[MilpSolution] = []
         self._plan: dict[datetime, tuple[float, float]] = {}  # interval -> (charge, discharge)
-        self._soc_end: dict[datetime, float] = {}  # interval -> planned SOC at its end
+        self._awards: dict[datetime, dict[Product, float]] = {}  # interval -> ancillary MW
+        self.committed: dict[datetime, tuple[float, float]] = {}  # offered (charge, discharge)
 
     @property
     def planned_profit_sgd(self) -> float:
@@ -70,17 +99,27 @@ class ScheduleStrategy:
     def _window_end(self, view: MarketView) -> datetime:
         if self.horizon is Horizon.FULL:
             return view.end
+        if self.horizon is Horizon.ROLLING:
+            span = (self.market.intervals_per_day - 1) * timedelta(hours=self.market.interval_h)
+            return min(view.now + span, view.end)
         last_of_day = datetime.combine(view.now.date(), time(), view.now.tzinfo) + timedelta(
             days=1, hours=-self.market.interval_h
         )
         return min(last_of_day, view.end)
 
     def _start_soc(self, view: MarketView, soc_mwh: float) -> float:
-        """SOC at the start of ``view.now``. With gate closure the intervals between the decision
-        and ``now`` are already committed by the previous plan, which always clears (self-schedule):
-        its planned SOC is exact. Otherwise (first plan) the SOC known at decision time."""
-        previous = view.now - timedelta(hours=self.market.interval_h)
-        return self._soc_end.get(previous, soc_mwh)
+        """SOC at the start of ``view.now``: the SOC known at the decision plus the intervals
+        already committed in between (gate closure). Self-scheduled offers always clear, so
+        this is exact."""
+        b = Battery(self.battery, soc_mwh)
+        dt = self.market.interval_h
+        soc, at = soc_mwh, view.decided_at
+        while at < view.now:
+            charge, discharge = self.committed.get(at, (0.0, 0.0))
+            soc += b.charge_gain(dt) * charge - b.discharge_loss(dt) * discharge
+            at += timedelta(hours=dt)
+        cfg = self.battery
+        return min(max(soc, cfg.soc_min), cfg.soc_max)
 
     def _replan(self, view: MarketView, soc_mwh: float) -> None:
         soc_mwh = self._start_soc(view, soc_mwh)
@@ -95,6 +134,13 @@ class ScheduleStrategy:
         self.plans.append(plan)
         s = plan.schedule
         stamps = s[Col.INTERVAL_START].to_list()
+        award_cols = {p: col for p, col in AWARD_COLUMN.items() if col in s.columns}
+        self._awards = {
+            at: {p: float(row[col]) for p, col in award_cols.items()}
+            for at, row in zip(
+                stamps, s.select(list(award_cols.values())).iter_rows(named=True), strict=True
+            )
+        }
         self._plan = dict(
             zip(
                 stamps,
@@ -102,13 +148,15 @@ class ScheduleStrategy:
                 strict=True,
             )
         )
-        self._soc_end.update(zip(stamps, s[Col.SOC_MWH].to_list(), strict=True))
 
     def offers(self, view: MarketView, soc_mwh: float) -> IntervalOffers:
-        if view.now not in self._plan:
+        if self.horizon is Horizon.ROLLING or view.now not in self._plan:
             self._replan(view, soc_mwh)
         charge, discharge = self._plan[view.now]
-        return IntervalOffers.self_schedule(view.now, charge, discharge, self.market)
+        self.committed[view.now] = (charge, discharge)
+        return IntervalOffers.self_schedule(
+            view.now, charge, discharge, self.market, self._awards.get(view.now)
+        )
 
 
 class CurveStep(StrEnum):
@@ -122,15 +170,17 @@ class CurveStep(StrEnum):
 
 
 class WaterValueStrategy:
-    """Offer curves from the day's SDP water value (CLAUDE.md bidding layer).
+    """Offer curves from the water value of the latest forecast issue (CLAUDE.md bidding layer).
 
-    For each delivery day, at its first decision: scenarios issued by then (latest issue) give
-    per-stage price distributions; ``solve_sdp`` gives V_t. For each interval t, decided at gate
-    closure: the curve from V_{t+1} around the SOC *expected* at t (decision SOC + own pending
-    offers cleared under the scenario prices), trimmed to tranches that can clear within the
-    interval's scenario price range, compressed to K tranches per side, clipped to [floor, cap];
-    tranches that clear at every plausible price are made price-taking (certain); finally capped
-    from the *worst-case* SOC after the pending offers (``feasibility``).
+    For each forecast issue (the latest one issued by the decision time): its scenarios give
+    per-stage price distributions over its horizon; ``solve_sdp`` gives V_t (terminal: below
+    soc_init penalised at the end of the horizon). With daily issues this is one SDP per day;
+    with intraday issues one per decision. For interval t, decided at gate closure: the curve
+    from V_{t+1} around the SOC *expected* at t (decision SOC + own pending offers cleared under
+    the scenario prices), trimmed to tranches that can clear within the interval's scenario
+    price range, compressed to K tranches per side, clipped to [floor, cap]; tranches that clear
+    at every plausible price are made price-taking (certain); finally capped from the
+    *worst-case* SOC after the pending offers (``feasibility``).
     """
 
     def __init__(
@@ -139,23 +189,31 @@ class WaterValueStrategy:
         battery: BatteryConfig,
         market: MarketConfig,
         bidding: BiddingConfig,
+        ancillary: bool = False,
     ) -> None:
         self.battery, self.market, self.bidding = battery, market, bidding
-        days = scenarios.with_columns(pl.col(Col.INTERVAL_START).dt.date().alias("_day"))
-        self._by_day: dict[date, pl.DataFrame] = {
-            key[0]: part for key, part in days.partition_by("_day", as_dict=True).items()
-        }
-        self.value_functions: dict[date, ValueFunction] = {}
-        self.expected_profit_sgd: dict[date, float] = {}
+        self.ancillary = ancillary  # commit ancillary services from a plan, energy in the rest
+        self._plan_awards: dict[datetime, dict[Product, float]] = {}  # target -> planned MW
+        ordered = scenarios.sort(Col.ISSUED_AT, Col.SCENARIO, Col.INTERVAL_START)
+        self._scenarios = ordered
+        issues = ordered[Col.ISSUED_AT]
+        self._issues: list[datetime] = issues.unique(maintain_order=True).to_list()
+        starts = issues.search_sorted(pl.Series(self._issues), side="left").to_list()
+        self._rows = dict(
+            zip(self._issues, zip(starts, [*starts[1:], ordered.height], strict=True), strict=True)
+        )
+        self.value_functions: dict[datetime, ValueFunction] = {}  # by issue time
+        self._issue_prices: dict[datetime, tuple[list[datetime], np.ndarray, np.ndarray]] = {}
+        self.expected_profit_sgd: dict[datetime, float] = {}
         self.submitted: dict[datetime, IntervalOffers] = {}
-        self._stage_prices: dict[date, tuple[np.ndarray, np.ndarray]] = {}  # [T, K], [K]
+        self.issue_of: dict[datetime, tuple[datetime, int]] = {}  # target -> (issue, stage)
         self.reference_soc: dict[datetime, float] = {}  # SOC each curve was built around
         self.decision_soc: dict[datetime, float] = {}  # SOC known at the decision
         self.pending_slots: dict[datetime, list[datetime]] = {}  # offers pending at the decision
 
     @property
     def planned_profit_sgd(self) -> float:
-        """Sum over days of the SDP's expected value at the day's first decision."""
+        """Sum of the SDPs' expected values when each issue was first used."""
         return sum(self.expected_profit_sgd.values())
 
     @property
@@ -166,54 +224,111 @@ class WaterValueStrategy:
     def solve_time_s(self) -> float:
         return sum(v.solve_time_s for v in self.value_functions.values())
 
-    def stage_prices(self, day: date) -> np.ndarray:
-        """Scenario prices [T, K] the day's SDP used."""
-        return self._stage_prices[day][0]
+    def stage_prices(self, issue: datetime) -> np.ndarray:
+        """Scenario prices [T, K] the issue's SDP used."""
+        return self._issue_prices[issue][1]
 
-    @staticmethod
-    def day_start_of(day: date) -> datetime:
-        return day_start(day)
+    def _load_issue(self, issue: datetime) -> tuple[list[datetime], np.ndarray, np.ndarray]:
+        if issue not in self._issue_prices:
+            a, b = self._rows[issue]
+            part = self._scenarios.slice(a, b - a)
+            scenario_ids = part[Col.SCENARIO].unique(maintain_order=True).to_list()
+            wide = part.pivot(on=Col.SCENARIO, index=Col.INTERVAL_START, values=Col.USEP_FORECAST)
+            wide = wide.sort(Col.INTERVAL_START)
+            prices = wide.select([str(k) for k in scenario_ids]).to_numpy()  # [T, K]
+            weights = part.unique(Col.SCENARIO, maintain_order=True)[Col.WEIGHT].to_numpy()
+            self._issue_prices[issue] = (
+                wide[Col.INTERVAL_START].to_list(),
+                prices,
+                weights.astype(float) / weights.sum(),
+            )
+        return self._issue_prices[issue]
 
-    def _stage(self, at: datetime) -> tuple[date, int]:
-        day = at.date()
-        return day, int((at - day_start(day)) / timedelta(hours=self.market.interval_h))
+    def _issue_for(self, view: MarketView) -> tuple[datetime, int]:
+        """(latest issue known at the decision that covers ``view.now``, stage of ``now``)."""
+        i = bisect.bisect_right(self._issues, view.decided_at)
+        while i > 0:
+            issue = self._issues[i - 1]
+            stamps, _, _ = self._load_issue(issue)
+            if stamps[0] <= view.now <= stamps[-1]:
+                return issue, stamps.index(view.now)
+            if stamps[-1] < view.now:
+                break
+            i -= 1
+        raise ValueError(f"no scenarios covering {view.now} issued by {view.decided_at}")
 
-    def _value_function(self, day: date, view: MarketView, soc_mwh: float) -> ValueFunction:
-        if day in self.value_functions:
-            return self.value_functions[day]
-        if day not in self._by_day:
-            raise ValueError(f"no scenarios for delivery day {day}")
-        known = self._by_day[day].filter(pl.col(Col.ISSUED_AT) <= view.decided_at)
-        if known.is_empty():
-            raise ValueError(f"no scenarios for {day} issued by {view.decided_at}")
-        latest = known.filter(pl.col(Col.ISSUED_AT) == known[Col.ISSUED_AT].max())
-        scenario_ids = sorted(latest[Col.SCENARIO].unique().to_list())
-        wide = latest.pivot(on=Col.SCENARIO, index=Col.INTERVAL_START, values=Col.USEP_FORECAST)
-        prices = wide.sort(Col.INTERVAL_START).select([str(k) for k in scenario_ids]).to_numpy()
-        weights = (
-            latest.unique(Col.SCENARIO).sort(Col.SCENARIO)[Col.WEIGHT].to_numpy().astype(float)
+    def _ancillary_limits(
+        self, issue: datetime, view: MarketView, soc_mwh: float
+    ) -> StageLimits | None:
+        """Ancillary awards over the issue's horizon from a MILP on the scenarios' mean energy
+        price and persistence ancillary prices; the per-stage limits they leave to energy."""
+        if not self.ancillary:
+            return None
+        stamps, prices, weights = self._load_issue(issue)
+        known = SimpleNamespace(now=stamps[0], decided_at=view.decided_at, history=view.history)
+        ancillary = PersistenceForecaster(strict=False).forecast(known, stamps[-1]).drop(Col.USEP)
+        if not any(c in ancillary.columns for c in AWARD_PRICE_COLUMNS(self.market)):
+            return None
+        plan_prices = pl.DataFrame({Col.INTERVAL_START: stamps, Col.USEP: prices @ weights})
+        plan_prices = plan_prices.with_columns(
+            pl.col(Col.INTERVAL_START).dt.cast_time_unit("us")
+        ).join(ancillary, on=Col.INTERVAL_START, how="left")
+        start = min(max(soc_mwh, self.battery.soc_min), self.battery.soc_max)
+        plan = solve_schedule(
+            plan_prices,
+            Battery(self.battery, start),
+            self.market,
+            soc_terminal_min=self.battery.soc_init,
+        ).schedule
+        m, b = self.market, self.battery
+        rows = plan.select(Col.INTERVAL_START, *AWARD_COLUMN.values()).iter_rows(named=True)
+        raise_mw, lower_mw, raise_e, lower_e = [], [], [], []
+        for row in rows:
+            awards = {p: float(row[c]) for p, c in AWARD_COLUMN.items()}
+            self._plan_awards[row[Col.INTERVAL_START]] = awards
+            raise_mw.append(sum(awards[p] for p in RAISE_PRODUCTS))
+            lower_mw.append(sum(awards[p] for p in LOWER_PRODUCTS))
+            raise_e.append(sum(awards[p] * m.sustain_h(p) for p in RAISE_PRODUCTS))
+            lower_e.append(sum(awards[p] * m.sustain_h(p) for p in LOWER_PRODUCTS))
+        return StageLimits(
+            max_discharge_mw=np.maximum(b.p_max_mw - np.asarray(raise_mw), 0.0),
+            max_charge_mw=np.maximum(b.p_max_mw - np.asarray(lower_mw), 0.0),
+            soc_low=b.soc_min + np.asarray(raise_e) / b.eta_d,
+            soc_high=b.soc_max - np.asarray(lower_e) * b.eta_c,
         )
-        vf = solve_sdp(prices, weights, Battery(self.battery), self.market.interval_h, self.bidding)
-        self.value_functions[day] = vf
-        self._stage_prices[day] = (prices, weights / weights.sum())
-        self.expected_profit_sgd[day] = vf.at(0, soc_mwh)
-        return vf
+
+    def _value_function(
+        self, issue: datetime, stage: int, soc_mwh: float, view: MarketView | None = None
+    ) -> ValueFunction:
+        if issue not in self.value_functions:
+            _, prices, weights = self._load_issue(issue)
+            limits = self._ancillary_limits(issue, view, soc_mwh) if view is not None else None
+            vf = solve_sdp(
+                prices,
+                weights,
+                Battery(self.battery),
+                self.market.interval_h,
+                self.bidding,
+                limits=limits,
+            )
+            self.value_functions[issue] = vf
+            self.expected_profit_sgd[issue] = vf.at(stage, soc_mwh)
+        return self.value_functions[issue]
 
     def _expected_soc(
         self, soc_mwh: float, pending: list[tuple[datetime, IntervalOffers]], here: Battery
     ) -> float:
-        """SOC expected at the target: pending offers cleared under their day's scenarios."""
+        """SOC expected at the target: pending offers cleared under the scenarios they were
+        built with (their issue's stage prices)."""
         if not pending:
             return soc_mwh
         rows, weights = [], None
         for at, _ in pending:
-            day, t = self._stage(at)
-            if day not in self._stage_prices:
-                return soc_mwh
-            prices, w = self._stage_prices[day]
+            issue, stage = self.issue_of[at]
+            _, prices, w = self._issue_prices[issue]
             if weights is not None and len(w) != len(weights):
-                return soc_mwh  # scenario sets of different sizes across midnight
-            rows.append(prices[t].tolist())
+                return soc_mwh  # scenario sets of different sizes
+            rows.append(prices[stage].tolist())
             weights = w
         return expected_soc_after(
             soc_mwh, [o for _, o in pending], rows, weights.tolist(), here, self.market.interval_h
@@ -224,14 +339,14 @@ class WaterValueStrategy:
         at: datetime,
         soc_mwh: float,
         reference: float,
-        pending: list[IntervalOffers],
+        pending: list[tuple[datetime, IntervalOffers]],
     ) -> dict[CurveStep, IntervalOffers]:
         """The offers for interval ``at`` after each step of the pipeline (in order)."""
         dt, m = self.market.interval_h, self.market
-        day, t = self._stage(at)
-        vf = self.value_functions[day]
+        issue, t = self.issue_of[at]
+        vf = self.value_functions[issue]
         here = Battery(self.battery, soc_mwh)
-        stage_prices = self._stage_prices[day][0][t]
+        stage_prices = self.stage_prices(issue)[t]
         margin = self.bidding.price_band_margin_sgd_per_mwh
         low, high = stage_prices.min() - margin, stage_prices.max() + margin
 
@@ -255,23 +370,103 @@ class WaterValueStrategy:
             discharge, charge, low, high, m.price_floor, m.price_cap
         )
         steps[CurveStep.PRICE_TAKING] = offers(discharge, charge)
-        steps[CurveStep.FEASIBLE] = make_feasible(
-            steps[CurveStep.PRICE_TAKING], soc_mwh, pending, here, dt, m.price_floor, m.price_cap
+        steps[CurveStep.FEASIBLE] = self._feasible(
+            steps[CurveStep.PRICE_TAKING], soc_mwh, pending, here
         )
         return steps
 
+    def _feasible(
+        self,
+        offers: IntervalOffers,
+        soc_mwh: float,
+        pending: list[tuple[datetime, IntervalOffers]],
+        here: Battery,
+    ) -> IntervalOffers:
+        """Cap tranche sizes from the SOC bounds after the pending offers (``feasibility``)."""
+        dt, m, f = self.market.interval_h, self.market, self.bidding.feasibility
+        pending_offers = [o for _, o in pending]
+        if self.ancillary and offers.interval_start in self._plan_awards:
+            return self._feasible_with_ancillary(offers, soc_mwh, pending_offers, here)
+        if f.mode is FeasibilityMode.WORST_CASE or not pending:
+            return make_feasible(
+                offers, soc_mwh, pending_offers, here, dt, m.price_floor, m.price_cap
+            )
+        worst_low, worst_high = soc_range_after(
+            soc_mwh, pending_offers, here, dt, m.price_floor, m.price_cap
+        )
+        rows, weights = [], []
+        for at, _ in pending:
+            issue, stage = self.issue_of[at]
+            _, prices, w = self._issue_prices[issue]
+            rows.append(prices[stage])
+            weights.append(w)
+        q_low, q_high = soc_quantiles_after(
+            soc_mwh, pending_offers, rows, weights, here, dt, f.soc_quantile
+        )
+        margin = f.margin_pct / 100 * self.battery.usable_mwh
+        low = max(worst_low, q_low - margin)
+        high = min(worst_high, q_high + margin)
+        return caps_from_bounds(offers, low, high, here, dt)
+
+    def _feasible_with_ancillary(
+        self,
+        offers: IntervalOffers,
+        soc_mwh: float,
+        pending: list[IntervalOffers],
+        here: Battery,
+    ) -> IntervalOffers:
+        """Worst-case joint feasibility: planned ancillary awards scaled to what the worst-case
+        SOC after the pending offers can sustain, then energy capped to the headroom left.
+        Awards are offered at price 0 (they always clear)."""
+        dt, m, b = self.market.interval_h, self.market, self.battery
+        low, high = soc_range_after(soc_mwh, pending, here, dt, m.price_floor, m.price_cap)
+        awards = dict(self._plan_awards[offers.interval_start])
+        raise_e = sum(awards[p] * m.sustain_h(p) for p in RAISE_PRODUCTS)
+        lower_e = sum(awards[p] * m.sustain_h(p) for p in LOWER_PRODUCTS)
+        f_raise = min(1.0, max(0.0, (low - b.soc_min) * b.eta_d / raise_e)) if raise_e else 1.0
+        f_lower = min(1.0, max(0.0, (b.soc_max - high) / (b.eta_c * lower_e))) if lower_e else 1.0
+        for p in awards:
+            awards[p] *= min(f_raise, f_lower) if p in LOWER_PRODUCTS else f_raise
+        # the plan may count on charging to free room for raise reserves; the energy bids do not
+        # follow the plan, so reserves alone must fit within the power
+        for group in (RAISE_PRODUCTS, LOWER_PRODUCTS):
+            total = sum(awards[p] for p in group)
+            if total > b.p_max_mw:
+                for p in group:
+                    awards[p] *= b.p_max_mw / total
+        raise_mw = sum(awards[p] for p in RAISE_PRODUCTS)
+        lower_mw = sum(awards[p] for p in LOWER_PRODUCTS)
+        raise_e = sum(awards[p] * m.sustain_h(p) for p in RAISE_PRODUCTS)
+        lower_e = sum(awards[p] * m.sustain_h(p) for p in LOWER_PRODUCTS)
+        energy = caps_from_bounds(
+            offers,
+            low - raise_e / b.eta_d,
+            high + lower_e * b.eta_c,
+            here,
+            dt,
+            max_discharge_mw=b.p_max_mw - raise_mw,
+            max_charge_mw=b.p_max_mw - lower_mw,
+        )
+        ancillary = tuple(
+            AncillaryTranche(product=p, price=0.0, quantity_mw=mw)
+            for p, mw in awards.items()
+            if mw > TOL and p in m.ancillary_products
+        )
+        return energy.model_copy(update={"ancillary": ancillary})
+
     def offers(self, view: MarketView, soc_mwh: float) -> IntervalOffers:
-        day, _ = self._stage(view.now)
         step = timedelta(hours=self.market.interval_h)
         gaps = round((view.now - view.decided_at) / step)  # = gate closure intervals
         slots = [view.now - k * step for k in range(gaps, 0, -1)]  # decided .. now, in order
         pending = [(at, self.submitted[at]) for at in slots if at in self.submitted]
-        self._value_function(day, view, soc_mwh)
+        issue, stage = self._issue_for(view)
+        self.issue_of[view.now] = (issue, stage)
+        self._value_function(issue, stage, soc_mwh, view)
         reference = self._expected_soc(soc_mwh, pending, Battery(self.battery, soc_mwh))
         self.reference_soc[view.now] = reference
         self.decision_soc[view.now] = soc_mwh
         self.pending_slots[view.now] = [at for at, _ in pending]
-        steps = self.curve_steps(view.now, soc_mwh, reference, [o for _, o in pending])
+        steps = self.curve_steps(view.now, soc_mwh, reference, pending)
         offers = steps[CurveStep.FEASIBLE]
         self.submitted[view.now] = offers
         return offers

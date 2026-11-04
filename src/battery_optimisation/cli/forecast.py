@@ -75,13 +75,14 @@ def run(
         test_start = start.date()
     warmup = test_start - timedelta(days=cfg.scenarios.calibration_days)
     covs = "-".join(str(c) for c in cfg.covariates)
-    name = f"forecast_chronos2_{covs}_{cfg.weather.model}_{test_start}_{test_end}"
+    cadence = "" if cfg.issue_every_intervals >= 48 else f"_every{cfg.issue_every_intervals}"
+    name = f"forecast_chronos2_{covs}_{cfg.weather.model}{cadence}_{test_start}_{test_end}"
     run_dir = Path(runs_dir) / name
 
-    features, weather_report = walkforward.build_features(warmup, test_end, cfg)
+    features, trajectories, weather_report = walkforward.build_features(warmup, test_end, cfg)
     issues = walkforward.issue_times(warmup, test_end, cfg)
     t0 = datetime.now()
-    qf = ChronosModel(cfg).forecast_quantiles(features, issues)
+    qf = ChronosModel(cfg).forecast_quantiles(features, issues, trajectories)
     chronos_seconds = (datetime.now() - t0).total_seconds()
 
     realised = load_nems(warmup - timedelta(days=1), test_end, series=[NemsSeries.USEP]).select(

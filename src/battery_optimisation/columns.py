@@ -63,16 +63,25 @@ class Col(StrEnum):
     NET_MW = "net_mw"  # discharge - charge; positive = export
     SOC_MWH = "soc_mwh"
 
+    # Ancillary awards (MW of availability per interval)
+    REG_MW = "reg_mw"  # regulation (up and down)
+    PRI_MW = "pri_mw"  # primary reserve (raise)
+    CON_MW = "con_mw"  # contingency reserve (raise)
+
     # Settlement, per interval or aggregated (SGD)
     REVENUE_SGD = "revenue_sgd"  # USEP * net energy
     DEGRADATION_SGD = "degradation_sgd"  # kappa * throughput
-    PROFIT_SGD = "profit_sgd"  # revenue - degradation
+    ANCILLARY_SGD = "ancillary_sgd"  # availability payments (pay-as-clear), in profit
+    PROFIT_SGD = "profit_sgd"  # revenue + ancillary - degradation - penalty
+    SHORTFALL_MW = "shortfall_mw"  # cleared but not deliverable (physical limits), MW
+    PENALTY_SGD = "penalty_sgd"  # shortfall settled at the shortfall penalty price
 
     # Aggregates (sim/metrics.py)
     PERIOD_START = "period_start"  # first day of the aggregation period (date)
     CHARGED_MWH = "charged_mwh"  # grid-side energy bought
     DISCHARGED_MWH = "discharged_mwh"  # grid-side energy sold
     CYCLES = "cycles"  # equivalent full cycles
+    SHORTFALL_MWH = "shortfall_mwh"
     MEAN_USEP = "mean_usep"
 
     # Forecasts (long format: one row per issue time x interval x quantile)

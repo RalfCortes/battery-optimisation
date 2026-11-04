@@ -7,8 +7,9 @@ batch_size: 64
 
 context_days: 28             # history given to the model per forecast (28 * 48 intervals)
 prediction_length: 48        # intervals of the delivery day forecast
-issue_lead_intervals: 2      # forecast for delivery day D is issued this many intervals before D 00:00
-                             # (= gate closure of its first interval); uses data strictly before then
+issue_lead_intervals: 2      # a forecast is issued this many intervals before its first interval
+                             # (= its gate closure); uses data strictly before then
+issue_every_intervals: 1     # re-forecast at every gate closure (48 = once a day, for D at D-1 23:00)
 quantile_levels: [0.01, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 0.99]  # Chronos-2 native grid
 
 # Covariate groups (forecast/covariates.py). demand is past-only: no archived demand forecasts.
@@ -22,7 +23,7 @@ weather:
   # Open-Meteo single-runs API; only ecmwf_ifs keeps a run archive back to 2024.
   model: ecmwf_ifs            # provider used for the forecast features (ECMWF IFS 9 km)
   availability_delay_h: 8     # a run is usable this long after its nominal start
-  run_hours_utc: [0, 6, 12, 18]
+  run_hours_utc: [6, 18]       # runs used for as-of features (each covers 48 h: enough when 20 h old)
   forecast_days: 2            # trajectory length kept per run
   archive_models:             # providers whose runs are archived daily (cron); history only
     - ecmwf_ifs               # for ecmwf_ifs, the others keep recent runs only
@@ -52,8 +53,8 @@ spike_quantile: 0.95         # spike = realised USEP in the top 5% of the evalua
 
 scenarios:
   calibration_days: 90       # copula correlation fitted on PITs of the preceding N days
-  shrinkage: 0.1             # correlation shrinkage towards identity
-  n_samples: 1000            # copula paths sampled per day before reduction
+  shrinkage: 0.02            # correlation shrinkage towards identity (0.02 fits realised lag-1 best)
+  n_samples: 500             # copula paths sampled per issue before reduction
   n_scenarios: 30            # k-medoids reduction target (20-50 per CLAUDE.md)
   n_spike: 3                 # highest-price paths always kept as scenarios
   seed: 0

@@ -9,6 +9,7 @@ Examples::
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -23,14 +24,22 @@ from battery_optimisation.bidding.report import (
     save_bidding,
     to_markdown,
 )
-from battery_optimisation.bidding.strategy import Horizon
 from battery_optimisation.bidding.sweep import sweep, sweep_breakdown
 from battery_optimisation.columns import Col
-from battery_optimisation.config import load_battery, load_bidding, load_market
-from battery_optimisation.data.nems import NemsSeries, load_nems
-from battery_optimisation.forecast.report import list_forecast_runs, load_forecast_run
+from battery_optimisation.config import (
+    BiddingConfig,
+    FeasibilityMode,
+    load_battery,
+    load_bidding,
+    load_market,
+)
+from battery_optimisation.forecast.report import (
+    list_forecast_runs,
+    load_forecast_run,
+    schedule_horizon,
+)
 from battery_optimisation.logs import configure_logging
-from battery_optimisation.sim.backtest import StrategyName
+from battery_optimisation.sim.backtest import StrategyName, load_prices
 
 app = typer.Typer(
     help="Water-value bidding backtests.", no_args_is_help=True, pretty_exceptions_enable=False
@@ -47,16 +56,43 @@ def run(
     forecast_run: Annotated[
         Path | None, typer.Option(help="Forecast run folder; default: the latest.")
     ] = None,
+    feasibility: Annotated[FeasibilityMode | None, typer.Option(help="Default: config.")] = None,
+    margin_pct: Annotated[
+        float | None, typer.Option(help="Probabilistic margin, % usable.")
+    ] = None,
+    soc_quantile: Annotated[float | None, typer.Option(help="Probabilistic SOC quantile.")] = None,
+    ancillary: Annotated[
+        bool, typer.Option(help="Regulation and reserves too (plan + energy curves).")
+    ] = False,
 ) -> None:
     """Water-value offers vs self-schedule, price sweep check, comparison of all strategies."""
     configure_logging()
-    bidding = load_bidding()
+    data = load_bidding().model_dump()  # overrides re-validated like the YAML
+    for key, value in (
+        ("mode", feasibility),
+        ("margin_pct", margin_pct),
+        ("soc_quantile", soc_quantile),
+    ):
+        if value is not None:
+            data["feasibility"][key] = value
+    bidding = BiddingConfig.model_validate(data)
     fr = load_forecast_run(forecast_run or list_forecast_runs()[0])
-    realised = load_nems(fr.report.test_start, fr.report.test_end, series=[NemsSeries.USEP]).select(
-        Col.INTERVAL_START, Col.USEP
-    )
+    market = load_market()
+    start = fr.report.test_start
+    prices = load_prices(start - timedelta(days=3), fr.report.test_end, market, ancillary)
+    realised = prices.filter(pl.col(Col.INTERVAL_START).dt.date() >= start)
+    history = prices.filter(pl.col(Col.INTERVAL_START).dt.date() < start)
+    horizon = schedule_horizon(fr.report.config, market)
     ev = evaluate_bidding(
-        fr.scenarios, fr.quantiles, realised, load_battery(), load_market(), bidding
+        fr.scenarios,
+        fr.quantiles,
+        realised,
+        load_battery(),
+        market,
+        bidding,
+        horizon,
+        history=history,
+        ancillary=ancillary,
     )
     grid = np.asarray(bidding.sweep.prices)
     stats, per_interval = sweep(ev.water_value, grid)
@@ -66,24 +102,46 @@ def run(
         runs=ev.runs,
         water_value=ev.water_value,
     )
-    out = save_bidding(ev, fr.path / "bidding")
+    f = bidding.feasibility
+    tag = (
+        "worst_case"
+        if f.mode is FeasibilityMode.WORST_CASE
+        else f"prob_q{f.soc_quantile:g}_m{f.margin_pct:g}"
+    )
+    out = save_bidding(ev, fr.path / f"bidding_{tag}")
     per_interval.write_parquet(out / "sweep.parquet")
 
     # every strategy over the same window: forecast-run backtests + the bidding run
-    rows = [
-        ComparisonInput(
-            strategy=c.strategy,
-            horizon=c.horizon,
-            profit_sgd=c.profit_sgd,
-            cycles_per_day=c.cycles_per_day,
-        )
-        for c in fr.report.capture
-    ]
+    # (with ancillary services: this run's own benchmark and strategies only)
+    rows = (
+        []
+        if ancillary
+        else [
+            ComparisonInput(
+                strategy=c.strategy,
+                horizon=c.horizon,
+                profit_sgd=c.profit_sgd,
+                cycles_per_day=c.cycles_per_day,
+            )
+            for c in fr.report.capture
+        ]
+    )
+    if ancillary:
+        rows += [
+            ComparisonInput(
+                strategy=name,
+                horizon=summary.horizon,
+                profit_sgd=summary.total.profit_sgd,
+                cycles_per_day=summary.cycles_per_day,
+            )
+            for name, (summary, _) in ev.runs.items()
+            if name is not StrategyName.WATER_VALUE
+        ]
     wv = ev.runs[StrategyName.WATER_VALUE][0]
     rows.append(
         ComparisonInput(
             strategy=StrategyName.WATER_VALUE,
-            horizon=Horizon.DAY,
+            horizon=horizon,
             profit_sgd=wv.total.profit_sgd,
             cycles_per_day=wv.cycles_per_day,
         )
@@ -112,6 +170,8 @@ def run(
         )
     typer.echo(
         f"\nBidding uplift {r.uplift_sgd:,.0f} SGD ({r.uplift_pct:+.1%} vs self-schedule)"
+        f"\nFeasibility {r.feasibility}: shortfall {r.shortfall_mwh:,.1f} MWh, "
+        f"penalty {r.penalty_sgd:,.0f} SGD (in profit)"
         f"\nOffers: {r.mean_tranches_per_interval:.1f} tranches/interval, "
         f"{r.price_taking_share:.0%} of offered MW price-taking"
         f"\nPrice sweep ({stats.prices} prices {stats.price_min:g}..{stats.price_max:g}, "
