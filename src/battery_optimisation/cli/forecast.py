@@ -29,6 +29,7 @@ from battery_optimisation.forecast import walkforward
 from battery_optimisation.forecast.chronos import ChronosModel
 from battery_optimisation.forecast.report import (
     DEFAULT_RUNS_DIR,
+    ForecastRunFiles,
     evaluate,
     list_forecast_runs,
     load_forecast_run,
@@ -67,6 +68,9 @@ def run(
         list[Covariate] | None, typer.Option(help="Repeatable; default: config.")
     ] = None,
     runs_dir: Annotated[Path, typer.Option()] = backtest.DEFAULT_RUNS_DIR,
+    reuse_quantiles: Annotated[
+        bool, typer.Option(help="Reuse the run folder's saved quantiles (skip Chronos-2).")
+    ] = False,
 ) -> None:
     """Walk-forward Chronos-2 quantiles -> monthly copula scenarios -> stats and capture rates."""
     configure_logging()
@@ -89,8 +93,14 @@ def run(
 
     features, trajectories, weather_report = walkforward.build_features(warmup, test_end, cfg)
     issues = walkforward.issue_times(warmup, test_end, cfg)
+    saved = run_dir / ForecastRunFiles.QUANTILES
     t0 = datetime.now()
-    qf = ChronosModel(cfg).forecast_quantiles(features, issues, trajectories)
+    if reuse_quantiles and saved.exists():
+        qf = pl.read_parquet(saved)
+    else:
+        qf = ChronosModel(cfg).forecast_quantiles(features, issues, trajectories)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        qf.write_parquet(saved)  # kept if the evaluation fails (--reuse-quantiles)
     chronos_seconds = (datetime.now() - t0).total_seconds()
 
     realised = load_nems(warmup - timedelta(days=1), test_end, series=[NemsSeries.USEP]).select(

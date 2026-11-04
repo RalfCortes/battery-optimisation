@@ -172,7 +172,19 @@ def month_scenarios(
     copula = copula or fit_month_copula(qf, realised, month_start, cfg)
     rng = np.random.default_rng([sc.seed, month_start.toordinal()])
     start, end = day_start(month_start), day_start(month_end + timedelta(days=1))
-    month = qf.filter(pl.col(Col.INTERVAL_START).is_between(start, end, closed="left"))
+    # whole issues (copula paths), by their first delivery interval
+    first = pl.col(Col.INTERVAL_START).min().over(Col.ISSUED_AT)
+    month = qf.filter(first.is_between(start, end, closed="left"))
+    if month.is_empty():
+        return pl.DataFrame(
+            schema={
+                Col.ISSUED_AT: qf.schema[Col.ISSUED_AT],
+                Col.SCENARIO: pl.Int32,
+                Col.WEIGHT: pl.Float64,
+                Col.INTERVAL_START: qf.schema[Col.INTERVAL_START],
+                Col.USEP_FORECAST: pl.Float64,
+            }
+        )
     issues, stamps, values = _arrays(month, len(cfg.quantile_levels))
     frames = []
     for issued, ts, q in zip(issues, stamps, values, strict=True):
@@ -221,9 +233,11 @@ def forecast_stats(
     mase_scale: float,
     period_start: date | None = None,
 ) -> ForecastStats:
-    _, stamps, values = _arrays(qf, len(levels))
-    y = _realised_for(stamps, realised).reshape(-1)
-    v = values.reshape(-1, len(levels))
+    # one row per (issue, lead): issues may be partial (intraday issues cut by the period)
+    qf = qf.sort(Col.ISSUED_AT, Col.LEAD_PERIODS, Col.QUANTILE)
+    v = qf[Col.USEP_FORECAST].to_numpy().reshape(-1, len(levels))
+    stamps = qf.filter(pl.col(Col.QUANTILE) == qf[0, Col.QUANTILE])[Col.INTERVAL_START]
+    y = _realised_for(stamps.to_numpy()[None, :], realised).reshape(-1)
     ok = ~np.isnan(y)
     y, v = y[ok], v[ok]
     lv = list(levels)

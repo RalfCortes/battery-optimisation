@@ -168,3 +168,36 @@ def test_ancillary_quantiles_forecast_each_enabled_product() -> None:
     out = walkforward.ancillary_quantiles(FakeModel(), features, issues, None, market)
     assert FakeModel.targets == cols
     assert out[Col.TARGET].to_list() == cols
+
+
+def test_forecast_stats_accept_partial_issues() -> None:
+    """Intraday issues cut by a period boundary keep only some leads: still evaluated."""
+    qf, realised = synthetic(days=3, seed=3)
+    first = qf[Col.ISSUED_AT].min()
+    cut = qf.filter((pl.col(Col.ISSUED_AT) != first) | (pl.col(Col.LEAD_PERIODS) > 10))
+    stats = walkforward.forecast_stats(cut, realised, LEVELS, spike_threshold=1e9, mase_scale=1.0)
+    assert stats.intervals == 3 * 48 - 10
+
+
+def test_month_scenarios_keep_whole_issues_by_first_delivery() -> None:
+    """An issue whose horizon crosses the month end belongs to the month of its first delivery
+    interval, with all its steps; the next month does not see it."""
+    from battery_optimisation.forecast.scenarios import GaussianCopula
+
+    mu = np.full(48, 100.0)
+    issued = at(date(2026, 1, 31), 12)  # delivers Jan 31 13:00 .. Feb 1 12:30 (gap 2)
+    qf = quantile_frame(issued, normal_quantiles(mu, 10.0, LEVELS), LEVELS, gap=2)
+    cfg = CFG.model_copy(
+        update={
+            "scenarios": CFG.scenarios.model_copy(
+                update={"n_samples": 50, "n_scenarios": 5, "n_spike": 1}
+            )
+        }
+    )
+    copula = GaussianCopula.independent(48)
+    jan = walkforward.month_scenarios(qf, None, date(2026, 1, 1), date(2026, 1, 31), cfg, copula)
+    per_scenario = jan.group_by(Col.SCENARIO).len()["len"]
+    assert (per_scenario == 48).all()
+    assert walkforward.month_scenarios(
+        qf, None, date(2026, 2, 1), date(2026, 2, 28), cfg, copula
+    ).is_empty()
