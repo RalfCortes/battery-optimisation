@@ -142,7 +142,9 @@ class TransformStep(BaseModel):
     intervals_dropped: int = 0
     aggregation: dict[WeatherVar, Aggregation] = {}
     runs_used: list[datetime] = []
+    runs_dropped: list[datetime] = []  # came back (mostly) empty: treated as missing
     days_without_run: list[date] = []
+    days_on_older_run: int = 0  # the as-of run was missing: an older usable run was used
     lead_h_min: float | None = None
     lead_h_max: float | None = None
 
@@ -235,6 +237,7 @@ def parse_run(text: str, run: datetime, points: list[Point], cfg: WeatherConfig)
     )
 
 
+MIN_RUN_COMPLETENESS = 0.5  # a run with less of any variable is treated as missing
 RATE_LIMITED = 429
 BACKOFF_S = (60.0, 300.0, 900.0, 3600.0)  # waits after successive 429 answers
 
@@ -429,6 +432,14 @@ def _process_runs(
             values_missing_after=_null_counts(complete, cfg),
         )
     )
+    share = complete.group_by(Col.RUN_TIME).agg(
+        pl.min_horizontal(pl.col(c).is_not_null().mean() for c in cols).alias("_ok")
+    )
+    blank = share.filter(pl.col("_ok") < MIN_RUN_COMPLETENESS)[Col.RUN_TIME].sort().to_list()
+    if blank:
+        complete = complete.filter(~pl.col(Col.RUN_TIME).is_in(blank))
+        report.steps[-1] = report.steps[-1].model_copy(update={"runs_dropped": blank})
+        log.warning("weather.blank_runs", runs=[str(r) for r in blank])
     return complete, report
 
 
@@ -441,12 +452,17 @@ def to_features(
     cols = [COLUMN[v] for v in cfg.variables]
     complete, report = _process_runs(raw, fcfg, start, end)
     days = [start + timedelta(days=d) for d in range((end - start).days + 1)]
+    available = sorted(complete[Col.RUN_TIME].unique().to_list())
+    chosen, older = [], 0
+    for d in days:
+        target = asof_run(issue_time(d, fcfg), cfg)
+        k = bisect.bisect_right(available, target)
+        chosen.append(available[k - 1] if k else None)
+        older += bool(k) and available[k - 1] != target
     choice = pl.DataFrame(
-        {
-            "_day": days,
-            Col.RUN_TIME: [asof_run(issue_time(d, fcfg), cfg) for d in days],
-        }
-    ).with_columns(pl.col(Col.RUN_TIME).dt.cast_time_unit("us"))
+        {"_day": days, Col.RUN_TIME: chosen},
+        schema={"_day": pl.Date, Col.RUN_TIME: pl.Datetime("us", "UTC")},
+    ).drop_nulls()
     selected = (
         complete.with_columns(pl.col(Col.INTERVAL_START).dt.date().alias("_day"))
         .join(choice, on=["_day", Col.RUN_TIME], how="inner")
@@ -471,6 +487,7 @@ def to_features(
             rows_out=selected.height,
             runs_used=used,
             days_without_run=missing_days,
+            days_on_older_run=older,
             lead_h_min=selected[Col.WEATHER_LEAD_H].min() if selected.height else None,
             lead_h_max=selected[Col.WEATHER_LEAD_H].max() if selected.height else None,
             values_missing_after=_null_counts(selected, cfg),

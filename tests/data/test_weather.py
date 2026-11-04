@@ -110,20 +110,17 @@ def test_each_day_uses_its_asof_run_only() -> None:
     assert asof.days_without_run == []
 
 
-def test_missing_run_is_reported_and_left_empty() -> None:
+def test_missing_run_falls_back_and_uncovered_days_are_reported() -> None:
     cfg = one_point()
-    raw = raw_runs({utc(2026, 1, 1, 6): 0.0}, cfg)  # nothing for Jan 3's run (Jan 2 06Z)
-    wide, report = weather.to_features(
-        raw, FCFG.model_copy(update={"weather": cfg}), date(2026, 1, 2), date(2026, 1, 3)
-    )
-    assert wide.height == 96
-    assert (
-        wide.filter(pl.col(Col.INTERVAL_START) >= sgt(2026, 1, 3))[
-            feature_name(WeatherVar.TEMPERATURE, P0)
-        ].null_count()
-        == 48
-    )
-    assert report.step(Transform.ASOF).days_without_run == [date(2026, 1, 3)]
+    raw = raw_runs({utc(2026, 1, 1, 6): 0.0}, cfg)  # Jan 3's and Jan 4's runs are missing
+    fcfg = FCFG.model_copy(update={"weather": cfg})
+    wide, report = weather.to_features(raw, fcfg, date(2026, 1, 2), date(2026, 1, 4))
+    col = feature_name(WeatherVar.TEMPERATURE, P0)
+    day3 = wide.filter(pl.col(Col.INTERVAL_START).dt.date() == date(2026, 1, 3))[col]
+    assert day3.null_count() < 48  # older run (06Z Jan 1) covers Jan 3 until 14:00
+    asof = report.step(Transform.ASOF)
+    assert asof.days_on_older_run == 2
+    assert asof.days_without_run == [date(2026, 1, 4)]  # beyond the older run's 48 h
 
 
 def test_gap_fill_is_limited_and_reported() -> None:
@@ -253,3 +250,21 @@ def test_download_skips_a_run_the_server_fails_on(tmp_path, monkeypatch) -> None
         [utc(2026, 1, 1, 6), utc(2026, 1, 1, 18)], CFG, "ecmwf_ifs", tmp_path
     )
     assert [p.name for p in written] == ["20260101T18.parquet"]  # the failing run is skipped
+
+
+def test_blank_runs_count_as_missing() -> None:
+    """A run that came back (mostly) empty must not be used: fall back to the previous one."""
+    cfg = one_point()
+    fcfg = FCFG.model_copy(update={"weather": cfg})
+    good = raw_runs({utc(2026, 1, 1, 6): 0.0}, cfg)
+    blank = raw_runs({utc(2026, 1, 1, 18): 0.0}, cfg).with_columns(
+        pl.lit(None, pl.Float64).alias(c) for c in [weather.COLUMN[v] for v in cfg.variables]
+    )
+    raw = pl.concat([good, blank])
+    wx = weather.WeatherTrajectories.from_raw(raw, fcfg)
+    out = wx.for_issue(sgt(2026, 1, 2, 10), [sgt(2026, 1, 2, 12)])  # as-of run = the blank 18Z
+    assert out[feature_name(WeatherVar.TEMPERATURE, P0)][0] is not None
+    assert wx.fallbacks == 1
+    daily, report = weather.to_features(raw, fcfg, date(2026, 1, 3), date(2026, 1, 3))
+    # Jan 3's as-of run is 06Z Jan 2 (not downloaded): falls back to the latest complete run
+    assert report.step(Transform.ASOF).days_without_run == []
