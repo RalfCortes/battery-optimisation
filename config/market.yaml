@@ -5,6 +5,8 @@ timezone: Asia/Singapore     # interval-start convention
 interval_h: 0.5              # 30-minute dispatch/pricing intervals
 intervals_per_day: 48
 
+gate_closure_intervals: 2    # offers for interval t are fixed at the start of t-2 (NEMS ~65 min)
+
 n_tranches: 10               # K price-quantity tranches per product (TODO: confirm)
 
 price_floor: -4500.0         # SGD/MWh (TODO: confirm)

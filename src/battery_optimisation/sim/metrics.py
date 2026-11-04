@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date
 from enum import StrEnum
 
+import numpy as np
 import polars as pl
 from pydantic import BaseModel, ConfigDict
 
@@ -74,3 +75,51 @@ def total(frame: pl.DataFrame, battery: BatteryConfig, dt: float) -> PeriodStats
 def capture_rate(profit_sgd: float, perfect_foresight_profit_sgd: float) -> float:
     """Realised profit / perfect-foresight profit (headline metric)."""
     return profit_sgd / perfect_foresight_profit_sgd
+
+
+# --------------------------------------------------------------------------- forecast diagnostics
+
+
+def _cell_weights(levels: np.ndarray) -> np.ndarray:
+    """Width of the probability cell around each level (cells split at midpoints, cover [0, 1])."""
+    edges = np.concatenate([[0.0], (levels[1:] + levels[:-1]) / 2, [1.0]])
+    return np.diff(edges)
+
+
+def crps_quantiles(y: np.ndarray, levels: np.ndarray, values: np.ndarray) -> np.ndarray:
+    """CRPS per observation from quantile forecasts ``values`` [N, Q] at ``levels`` [Q].
+
+    CRPS = 2 * integral over tau of the pinball loss, approximated on the quantile grid.
+    Same units as ``y`` (SGD/MWh); lower is better; equals |y - c| for a point forecast c.
+    """
+    levels = np.asarray(levels, float)
+    diff = np.asarray(y, float)[:, None] - np.asarray(values, float)
+    pinball = np.maximum(levels * diff, (levels - 1) * diff)
+    return 2 * pinball @ _cell_weights(levels)
+
+
+def coverage(y: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> float:
+    """Share of observations inside [lower, upper]."""
+    return float(np.mean((y >= lower) & (y <= upper)))
+
+
+def spike_rates(y: np.ndarray, flag: np.ndarray, threshold: float) -> tuple[float, float]:
+    """(hit rate, false-alarm rate) of ``flag >= threshold`` for spikes ``y >= threshold``."""
+    spike, flagged = y >= threshold, flag >= threshold
+    hit = float(flagged[spike].mean()) if spike.any() else float("nan")
+    false_alarm = float(flagged[~spike].mean()) if (~spike).any() else float("nan")
+    return hit, false_alarm
+
+
+def seasonal_naive_mae(history: np.ndarray, season: int) -> float:
+    """MAE of the seasonal-naive forecast y[t] = y[t - season] over ``history`` (MASE scale)."""
+    history = np.asarray(history, float)
+    if history.size <= season:
+        raise ValueError(f"history shorter than one season ({season})")
+    diff = np.abs(history[season:] - history[:-season])
+    return float(np.nanmean(diff))
+
+
+def mase(y: np.ndarray, forecast: np.ndarray, scale: float) -> float:
+    """Mean absolute scaled error: MAE / ``scale`` (< 1: better than the in-sample naive)."""
+    return float(np.mean(np.abs(np.asarray(y) - np.asarray(forecast))) / scale)

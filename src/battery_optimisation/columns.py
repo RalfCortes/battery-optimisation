@@ -74,3 +74,33 @@ class Col(StrEnum):
     DISCHARGED_MWH = "discharged_mwh"  # grid-side energy sold
     CYCLES = "cycles"  # equivalent full cycles
     MEAN_USEP = "mean_usep"
+
+    # Forecasts (long format: one row per issue time x interval x quantile)
+    ISSUED_AT = "issued_at"  # when the forecast was made; uses data strictly before it
+    QUANTILE = "quantile"  # quantile level in (0, 1)
+    USEP_FORECAST = "usep_forecast"  # SGD/MWh
+    SCENARIO = "scenario"  # scenario id 0..K-1
+    WEIGHT = "weight"  # scenario probability
+
+    # Covariates
+    HOUR_SIN = "hour_sin"  # time of day, cyclic
+    HOUR_COS = "hour_cos"
+    DOW_SIN = "dow_sin"  # day of week, cyclic
+    DOW_COS = "dow_cos"
+    IS_OFF_DAY = "is_off_day"  # weekend or Singapore public holiday (0/1)
+    TPC_REGIME = "tpc_regime"  # temporary price cap policy in force (0/1)
+    TEMPERATURE_C = "temperature_c"  # weather forecast, 2 m air temperature
+    HUMIDITY_PCT = "humidity_pct"  # weather forecast, 2 m relative humidity
+    CLOUD_COVER_PCT = "cloud_cover_pct"  # weather forecast, total cloud cover
+    IRRADIANCE_WM2 = "irradiance_wm2"  # weather forecast, shortwave radiation
+    PRECIPITATION_MM = "precipitation_mm"  # weather forecast, precipitation in the hour
+    RUN_TIME = "run_time"  # weather model run (nominal start, UTC) a value comes from
+    WEATHER_LEAD_H = "weather_lead_h"  # hours between the run and the valid time
+    LATITUDE = "latitude"  # weather grid point
+    LONGITUDE = "longitude"
+
+    # Forecast evaluation (per month or overall)
+    CRPS = "crps"  # SGD/MWh, lower is better
+    COVERAGE_10_90 = "coverage_10_90"  # share of realised values inside [q10, q90]; ideal 0.8
+    SPIKE_HIT_RATE = "spike_hit_rate"  # share of spikes where q90 >= spike threshold
+    SPIKE_FALSE_ALARM = "spike_false_alarm"  # share of non-spikes where q90 >= threshold

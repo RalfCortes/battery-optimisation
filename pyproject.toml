@@ -8,7 +8,9 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "chronos-forecasting>=2.3.2",
     "highspy>=1.15.1",
+    "holidays>=0.108",
     "ipykernel>=7.4.0",
     "nbformat>=5.11.1",
     "numpy>=2.5.4",
@@ -17,7 +19,9 @@ dependencies = [
     "pydantic>=2.14.2",
     "pyyaml>=6.0.3",
     "requests>=2.34.2",
+    "scipy>=1.18.1",
     "structlog>=26.1.0",
+    "torch>=2.14",
     "typer>=0.27.3",
 ]
 
@@ -25,6 +29,10 @@ dependencies = [
 nems = "battery_optimisation.cli.nems:app"
 predispatch = "battery_optimisation.cli.predispatch:app"
 backtest = "battery_optimisation.cli.backtest:app"
+weather = "battery_optimisation.cli.weather:app"
+forecast = "battery_optimisation.cli.forecast:app"
+bidding = "battery_optimisation.cli.bidding:app"
+limited = "battery_optimisation.cli.limited:app"
 
 [build-system]
 requires = ["uv_build>=0.12.0,<0.13.0"]
@@ -33,9 +41,6 @@ build-backend = "uv_build"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-
-[[tool.uv.index]]
-url = "https://pkgs.dev.azure.com/AssistFlux-Project/AssistFlux/_packaging/package-registry/pypi/simple/"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
@@ -51,3 +56,16 @@ dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.3",
 ]
+
+# PyTorch built for CUDA 13.0 (GPUs: 2x RTX PRO 6000 Blackwell).
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv]
+# Only resolve for the Linux servers we run on.
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130" }]

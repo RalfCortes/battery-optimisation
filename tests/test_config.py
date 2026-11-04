@@ -40,3 +40,33 @@ def test_market_rejects_unknown_product() -> None:
     data = load_market().model_dump() | {"products": {"capacity": True}}
     with pytest.raises(ValidationError):
         MarketConfig.model_validate(data)
+
+
+def test_forecast_yaml_loads() -> None:
+    from battery_optimisation.config import Covariate, load_forecast
+
+    cfg = load_forecast()
+    assert cfg.prediction_length == 48
+    assert {0.1, 0.5, 0.9} <= set(cfg.quantile_levels)
+    assert Covariate.DEMAND in cfg.covariates
+    assert 20 <= cfg.scenarios.n_scenarios <= 50
+
+
+def test_forecast_rejects_levels_without_median() -> None:
+    from battery_optimisation.config import ForecastConfig, load_forecast
+
+    data = load_forecast().model_dump() | {"quantile_levels": [0.1, 0.9]}
+    with pytest.raises(ValidationError, match="0.5"):
+        ForecastConfig.model_validate(data)
+
+
+def test_bidding_yaml_loads() -> None:
+    from battery_optimisation.config import load_bidding
+
+    cfg = load_bidding()
+    assert cfg.soc_levels >= 51
+    assert cfg.terminal_penalty_sgd_per_mwh > load_market().price_cap
+    assert cfg.price_band_margin_sgd_per_mwh >= 0
+    assert (
+        cfg.sweep.prices[0] == cfg.sweep.price_min and cfg.sweep.prices[-1] == cfg.sweep.price_max
+    )

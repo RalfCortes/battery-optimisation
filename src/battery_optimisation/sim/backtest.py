@@ -12,6 +12,7 @@ import time
 from datetime import date, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from typing import Protocol
 from zoneinfo import ZoneInfo
 
 import polars as pl
@@ -23,11 +24,12 @@ from battery_optimisation.bidding.strategy import Horizon, ScheduleStrategy
 from battery_optimisation.columns import Col
 from battery_optimisation.config import BatteryConfig, MarketConfig
 from battery_optimisation.data.nems import TZ, NemsSeries, load_nems
+from battery_optimisation.forecast.base import Forecaster
 from battery_optimisation.forecast.perfect import PerfectForecaster
 from battery_optimisation.sim.clearing import Market
 from battery_optimisation.sim.dispatch import Dispatch
 from battery_optimisation.sim.metrics import Period, PeriodStats
-from battery_optimisation.sim.simulator import Simulator
+from battery_optimisation.sim.simulator import Simulator, Strategy
 
 log = structlog.get_logger(__name__)
 
@@ -35,7 +37,25 @@ DEFAULT_RUNS_DIR = Path(__file__).resolve().parents[3] / "runs"
 
 
 class StrategyName(StrEnum):
-    PERFECT_FORESIGHT = "perfect_foresight"  # ScheduleStrategy + PerfectForecaster
+    """MILP self-schedule driven by different forecasts (``ScheduleStrategy`` + forecaster)."""
+
+    PERFECT_FORESIGHT = "perfect_foresight"  # realised prices (oracle, benchmark)
+    CHRONOS_MEDIAN = "chronos_median"  # Chronos-2 median forecast
+    PERSISTENCE = "persistence"  # same interval yesterday
+    WATER_VALUE = "water_value"  # SDP water-value offer curves on copula scenarios (bidding)
+
+
+class ReportingStrategy(Strategy, Protocol):
+    """A strategy that reports what it planned (for ``RunSummary``)."""
+
+    @property
+    def planned_profit_sgd(self) -> float: ...
+
+    @property
+    def n_plans(self) -> int: ...
+
+    @property
+    def solve_time_s(self) -> float: ...
 
 
 class RunFiles(StrEnum):
@@ -83,31 +103,50 @@ def last_months_window(months: int, end: date | None = None) -> tuple[date, date
     return start + timedelta(days=1), end
 
 
-def run_perfect_foresight(
-    start: date,
-    end: date,
+def run_schedule(
+    name: StrategyName,
+    forecaster: Forecaster,
+    prices: pl.DataFrame,
     battery: BatteryConfig,
     market: MarketConfig,
     horizon: Horizon = Horizon.FULL,
+    history: pl.DataFrame | None = None,
 ) -> tuple[RunSummary, Dispatch]:
-    """Perfect-foresight benchmark: MILP on realised USEP, self-scheduled through the simulator."""
-    prices = load_nems(start, end, series=[NemsSeries.USEP]).select(Col.INTERVAL_START, Col.USEP)
-    strategy = ScheduleStrategy(PerfectForecaster(prices), battery, market, horizon)
+    """MILP self-schedule on ``forecaster``'s prices, cleared against realised ``prices``.
 
+    ``history``: realised prices before the window (visible to forecasters, not traded).
+    """
+    strategy = ScheduleStrategy(forecaster, battery, market, horizon)
+    return run_strategy(name, strategy, horizon, prices, battery, market, history)
+
+
+def run_strategy(
+    name: StrategyName,
+    strategy: ReportingStrategy,
+    horizon: Horizon,
+    prices: pl.DataFrame,
+    battery: BatteryConfig,
+    market: MarketConfig,
+    history: pl.DataFrame | None = None,
+) -> tuple[RunSummary, Dispatch]:
+    """Any strategy through the simulator over ``prices``; summarised."""
     t0 = time.perf_counter()
-    dispatch = Simulator(Market(market, prices), Battery(battery)).run(strategy)
+    dispatch = Simulator(Market(market, prices, history), Battery(battery)).run(strategy)
     simulate_time = time.perf_counter() - t0
 
-    # With a perfect forecast, the simulator must reproduce the plans exactly.
-    profit = dispatch.profit_sgd
-    if abs(profit - strategy.planned_profit_sgd) > 1e-6 * max(1.0, abs(profit)):
-        raise RuntimeError(
-            f"simulated profit {profit:.2f} != planned {strategy.planned_profit_sgd:.2f}"
-        )
+    if name is StrategyName.PERFECT_FORESIGHT:
+        # With a perfect forecast, the simulator must reproduce the plans exactly.
+        profit = dispatch.profit_sgd
+        if abs(profit - strategy.planned_profit_sgd) > 1e-6 * max(1.0, abs(profit)):
+            raise RuntimeError(
+                f"simulated profit {profit:.2f} != planned {strategy.planned_profit_sgd:.2f}"
+            )
+    start = prices[Col.INTERVAL_START].min().date()
+    end = prices[Col.INTERVAL_START].max().date()
     days = (end - start).days + 1
     total = dispatch.total()
     summary = RunSummary(
-        strategy=StrategyName.PERFECT_FORESIGHT,
+        strategy=name,
         horizon=horizon,
         start=start,
         end=end,
@@ -116,8 +155,8 @@ def run_perfect_foresight(
         battery=battery,
         interval_h=market.interval_h,
         planned_profit_sgd=strategy.planned_profit_sgd,
-        plans=len(strategy.plans),
-        solve_time_s=sum(p.solve_time_s for p in strategy.plans),
+        plans=strategy.n_plans,
+        solve_time_s=strategy.solve_time_s,
         simulate_time_s=simulate_time,
         total=total,
         profit_per_day_sgd=total.profit_sgd / days,
@@ -133,6 +172,20 @@ def run_perfect_foresight(
         simulate_time_s=round(simulate_time, 1),
     )
     return summary, dispatch
+
+
+def run_perfect_foresight(
+    start: date,
+    end: date,
+    battery: BatteryConfig,
+    market: MarketConfig,
+    horizon: Horizon = Horizon.FULL,
+) -> tuple[RunSummary, Dispatch]:
+    """Perfect-foresight benchmark: MILP on realised USEP, self-scheduled through the simulator."""
+    prices = load_nems(start, end, series=[NemsSeries.USEP]).select(Col.INTERVAL_START, Col.USEP)
+    return run_schedule(
+        StrategyName.PERFECT_FORESIGHT, PerfectForecaster(prices), prices, battery, market, horizon
+    )
 
 
 def save_run(summary: RunSummary, dispatch: Dispatch, runs_dir: Path = DEFAULT_RUNS_DIR) -> Path:

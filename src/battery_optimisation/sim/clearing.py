@@ -86,10 +86,15 @@ def check_prices(prices: pl.DataFrame, market: MarketConfig) -> None:
 
 
 class MarketView:
-    """Information available when offering for interval ``now``: realised prices before it."""
+    """What a strategy knows when it must fix its offer for interval ``now``.
 
-    def __init__(self, prices: pl.DataFrame, index: int) -> None:
-        self._prices, self._index = prices, index
+    Offers close ``gate`` intervals before ``now`` (``decided_at``); only realised prices strictly
+    before ``decided_at`` are visible (including history from before the simulation window).
+    """
+
+    def __init__(self, prices: pl.DataFrame, index: int, gate: int = 0) -> None:
+        # ``prices`` = pre-window history + window; ``index`` = position of ``now`` in it
+        self._prices, self._index, self._gate = prices, index, gate
 
     @property
     def now(self) -> datetime:
@@ -97,28 +102,49 @@ class MarketView:
         return self._prices[self._index, Col.INTERVAL_START]
 
     @property
+    def decided_at(self) -> datetime:
+        """Gate closure: when the offer for ``now`` is fixed."""
+        step = self._prices[1, Col.INTERVAL_START] - self._prices[0, Col.INTERVAL_START]
+        return self.now - self._gate * step
+
+    @property
     def end(self) -> datetime:
         """Start of the last interval of the simulation (planning horizon limit)."""
         return self._prices[-1, Col.INTERVAL_START]
 
     def history(self) -> pl.DataFrame:
-        """Realised ``Col.INTERVAL_START``, ``Col.USEP`` strictly before ``now``."""
-        return self._prices.slice(0, self._index)
+        """Realised ``Col.INTERVAL_START``, ``Col.USEP`` strictly before ``decided_at``."""
+        return self._prices.slice(0, max(self._index - self._gate, 0))
 
 
 class Market:
-    """Price-taker NEMS energy market over a window of realised prices."""
+    """Price-taker NEMS energy market over a window of realised prices.
 
-    def __init__(self, config: MarketConfig, prices: pl.DataFrame) -> None:
+    ``history``: realised prices before the window, visible to strategies but never traded.
+    """
+
+    def __init__(
+        self, config: MarketConfig, prices: pl.DataFrame, history: pl.DataFrame | None = None
+    ) -> None:
         prices = prices.select(Col.INTERVAL_START, Col.USEP).sort(Col.INTERVAL_START)
         check_prices(prices, config)
+        before = (
+            history.select(Col.INTERVAL_START, Col.USEP)
+            .filter(pl.col(Col.INTERVAL_START) < prices[0, Col.INTERVAL_START])
+            .sort(Col.INTERVAL_START)
+            if history is not None
+            else prices.clear()
+        )
         self.config = config
         self.prices = prices
         self.intervals: list[datetime] = prices[Col.INTERVAL_START].to_list()
         self._price_at = dict(zip(self.intervals, prices[Col.USEP].to_list(), strict=True))
+        self._known = pl.concat([before, prices])
+        self._offset = before.height
 
     def view(self, index: int) -> MarketView:
-        return MarketView(self.prices, index)
+        """View for offering on window interval ``index`` (gate closure from the config)."""
+        return MarketView(self._known, self._offset + index, self.config.gate_closure_intervals)
 
     def validate(self, offers: IntervalOffers) -> None:
         cfg = self.config

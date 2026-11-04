@@ -1,0 +1,17 @@
+# Water-value bidding: SDP over a SOC grid (optim/sdp.py) -> offer curves (bidding/).
+
+soc_levels: 101                        # SOC grid points from soc_min to soc_max (1 MWh steps here)
+terminal_penalty_sgd_per_mwh: 10000    # per MWh below soc_init at the end of the delivery day
+                                       # (same end-of-day rule as the self-schedule baseline)
+
+# Offer only tranches that could clear: discharge priced <= the highest scenario price of the
+# interval (+ margin), charge priced >= the lowest (- margin). Unoffered capacity is not counted
+# in the worst-case SOC of later intervals (gate closure), so it stays available to them.
+price_band_margin_sgd_per_mwh: 0.0
+
+# Price sweep sanity check (bidding/sweep.py): re-solve each interval at these prices and compare
+# with what the submitted offers clear.
+sweep:
+  price_min: -100
+  price_max: 2000
+  price_step: 10

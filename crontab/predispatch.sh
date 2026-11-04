@@ -7,6 +7,7 @@
 source "$HOME/.bashrc" >/dev/null 2>&1 || true
 
 set -euo pipefail
+unset UV_INDEX   # never resolve packages from that feed
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UV="$(command -v uv || echo "$HOME/.local/bin/uv")"

@@ -1,0 +1,9 @@
+# Daily archive of weather model runs (all providers in config/forecast.yaml, weather section).
+# Only ecmwf_ifs keeps a long run archive at Open-Meteo; for the other providers this cron is
+# what builds their as-of history. Each run fetches every run of the last 2 days.
+#
+# Install (appends to your existing crontab):
+#   (crontab -l 2>/dev/null; cat crontab/weather.cron) | crontab -
+# Logs: logs/weather.log (JSON lines). Data: data/raw/weather_runs/<model>/<YYYY-MM>/<run>.parquet
+
+17 6 * * * /home/cortesdonascimentral/battery-optimisation/crontab/weather.sh

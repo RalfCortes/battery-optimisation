@@ -1,9 +1,11 @@
 """Interval-by-interval simulation: strategy -> market clearing -> battery step.
 
-For each interval, in order:
-  1. the strategy sees ``MarketView`` (realised prices of earlier intervals only) and the current
-     SOC, and returns its offers for the interval;
-  2. the market clears them against the realised price;
+Gate closure G (``market.gate_closure_intervals``): the offer for interval t is fixed at the start
+of t - G. At the start of each interval i, in order:
+  1. the strategy is asked for its offers for interval i + G, seeing ``MarketView`` (realised
+     prices before the decision time only) and the SOC at the start of i (it does not yet know
+     how i .. i + G - 1 will clear); offers for the first G intervals are fixed at the window start;
+  2. the market clears interval i's offers (fixed G intervals ago) against the realised price;
   3. the battery applies the cleared powers (raising ``LimitBreachError`` if infeasible);
   4. revenue and degradation are booked.
 """
@@ -33,12 +35,25 @@ class Simulator:
 
     def run(self, strategy: Strategy) -> Dispatch:
         dt = self.market.config.interval_h
+        gate = self.market.config.gate_closure_intervals
+        intervals = self.market.intervals
+        pending: dict[int, IntervalOffers] = {}
+
+        def submit(j: int) -> None:
+            offers = strategy.offers(self.market.view(j), self.battery.soc_mwh)
+            if offers.interval_start != intervals[j]:
+                raise ValueError(
+                    f"strategy offered for {offers.interval_start}, not {intervals[j]}"
+                )
+            pending[j] = offers
+
+        for j in range(min(gate + 1, len(intervals))):  # gates closed at or before the start
+            submit(j)
         rows = []
-        for i, interval in enumerate(self.market.intervals):
-            offers = strategy.offers(self.market.view(i), self.battery.soc_mwh)
-            if offers.interval_start != interval:
-                raise ValueError(f"strategy offered for {offers.interval_start}, not {interval}")
-            cleared = self.market.clear(offers)
+        for i, interval in enumerate(intervals):
+            if i > 0 and i + gate < len(intervals):
+                submit(i + gate)
+            cleared = self.market.clear(pending.pop(i))
             step = self.battery.step(cleared.charge_mw, cleared.discharge_mw, dt)
             revenue = cleared.price * (step.discharge_mw - step.charge_mw) * dt
             rows.append(
