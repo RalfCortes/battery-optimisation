@@ -145,3 +145,18 @@ def test_forecast_frame_layout_and_batching(cfg) -> None:
         .agg((pl.col(Col.USEP_FORECAST).diff() < 0).any().alias("x"))
     )
     assert not crossing["x"].any()
+
+
+def test_any_price_column_can_be_the_target(cfg) -> None:
+    issued = at(date(2026, 1, 5))
+    features = make_features(7).with_columns((pl.col(Col.USEP) * 0 + 42.0).alias(Col.REGULATION))
+    features = features.with_columns(
+        pl.when(pl.col(Col.INTERVAL_START) >= issued)
+        .then(POISON)
+        .otherwise(pl.col(Col.REGULATION))
+        .alias(Col.REGULATION)
+    )
+    no_weather = cfg.model_copy(update={"covariates": [Covariate.CALENDAR]})
+    inp = build_input(features, issued, no_weather, None, target=Col.REGULATION)
+    assert np.all(inp.target == 42.0)  # the regulation price, history only
+    assert POISON not in inp.target

@@ -69,6 +69,7 @@ def build_input(
     issued_at: datetime,
     cfg: ForecastConfig,
     weather: WeatherSource | None,
+    target: str = Col.USEP,
 ) -> ForecastInput:
     """Model input for one issue time, from data strictly before it (plus KNOWN covariates).
 
@@ -92,7 +93,7 @@ def build_input(
         future = future.drop(wx.columns[1:], strict=False).join(wx, on=Col.INTERVAL_START)
     return ForecastInput(
         issued_at=issued_at,
-        target=_values(context, Col.USEP),
+        target=_values(context, target),
         past_covariates={c: _values(context, c) for c in past},
         future_covariates={c: _values(future, c) for c in known},
     )
@@ -132,13 +133,18 @@ class ChronosModel:
         features: pl.DataFrame,
         issues: list[datetime],
         weather: WeatherSource | None = None,
+        target: str = Col.USEP,
     ) -> pl.DataFrame:
+        """Quantile forecasts of ``target`` (USEP, or an ancillary price column)."""
         cfg = self.cfg
         levels = np.asarray(cfg.quantile_levels)
         frames = []
         t0 = time.perf_counter()
         for b in range(0, len(issues), cfg.batch_size):
-            batch = [build_input(features, t, cfg, weather) for t in issues[b : b + cfg.batch_size]]
+            batch = [
+                build_input(features, t, cfg, weather, target)
+                for t in issues[b : b + cfg.batch_size]
+            ]
             gap = cfg.issue_lead_intervals
             quantiles, _ = self.pipeline.predict_quantiles(
                 [inp.to_chronos() for inp in batch],

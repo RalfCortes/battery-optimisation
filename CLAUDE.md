@@ -28,14 +28,19 @@ clearing simulator on held-out data.
    - Never sample steps independently (creates fake spreads and overtrading).
    - Reserve activation = historical event frequency; regulation utilisation = empirical distribution.
    - Current implementation (`config/forecast.yaml`):
-     - Daily issue at 00:00 SGT, 48 steps, context 28 days; Chronos-2 native 21 quantiles; GPU via
-       `cuda_visible_devices`. Walk-forward: copula for month M fitted only on issues realised before M.
+     - Issued at gate closure (`issue_lead_intervals`) every `issue_every_intervals` (1 = re-forecast
+       every half-hour, rolling 48 steps; 48 = daily), context 28 days; Chronos-2 native 21
+       quantiles; GPU via `cuda_visible_devices`. Walk-forward: copula for month M fitted only on
+       issues realised before M (shrinkage 0.02 matches the realised lag-1 correlation).
      - Covariates (`forecast/covariates.py`): calendar + regime (KNOWN), demand (PAST only: no archived
        demand forecasts yet), weather (KNOWN).
      - **Weather is as-of** (`data/weather.py`): for issue time T, the latest run r with
        r + availability_delay_h <= T (Open-Meteo single runs; only `ecmwf_ifs` has history). Never use
        `previous_dayN` series for backtests: they include runs published after the issue time.
        Raw 3x3 grid values, one covariate per (variable, point); every transform is reported.
+       ECMWF IFS runs used: 06Z/18Z (`run_hours_utc`). Intraday issues take weather per issue from
+       `WeatherTrajectories`; a missing or blank run falls back to the latest usable older run
+       (counted/reported). Downloads are paced and resumable (429 backoff, 5xx skipped).
      - Never use realised future values as covariates (leakage); `build_input` takes data < issue time.
      - CLI: `uv run forecast run` -> `runs/forecast_*/` (quantiles, scenarios, report.json, backtests).
      - Cron: `crontab/predispatch.sh` (every 30 min), `crontab/weather.sh` (daily, all providers).
@@ -66,7 +71,15 @@ clearing simulator on held-out data.
      band (+- margin) -> compress to K -> tranches beyond the band made price-taking (floor/cap,
      certain) -> feasibility from the worst-case SOC (price-taking tranches count as cleared).
      With one exact scenario it reproduces the daily perfect-foresight profit (test).
-     CLI: `uv run bidding run` -> `<forecast run>/bidding/` (report.json, backtests).
+     With intraday issues: one SDP per issue, the self-schedule re-plans at every decision
+     (`Horizon.ROLLING`) from the SOC after its committed offers.
+     Feasibility `mode: probabilistic` (SOC quantile + margin, `ShortfallPolicy.PENALISE`) exists
+     but loses heavily to worst-case on real data (shortfall penalties): keep worst-case.
+     Ancillary (`--ancillary`): per issue, a MILP on mean scenario energy + persistence ancillary
+     prices commits reserves; their power/SOC needs become SDP `StageLimits`; at gate closure the
+     awards are scaled to the worst-case SOC and offered at 0, energy curves capped to the rest.
+     CLI: `uv run bidding run` -> `<forecast run>/bidding_<tag>/` (report.json, comparison.md/.csv,
+     sweep.parquet, backtests).
 4. **Simulator / backtest** (`src/sim/`)
    - Gate closure (`market.yaml: gate_closure_intervals`, 2 = NEMS ~65 min): the offer for t is fixed
      at the start of t-2 with the SOC and prices known then (`MarketView.decided_at`). Forecasts for
@@ -88,7 +101,13 @@ clearing simulator on held-out data.
        battery. `Dispatch` (`sim/dispatch.py`) holds the per-interval frame + metrics.
      - `sim/backtest.py`: runs + `RunSummary` (pydantic), saved to `runs/<name>/`
        (`summary.json`, `dispatch.parquet`); CLI `uv run backtest perfect-foresight`.
+   - Ancillary services: `IntervalOffers.ancillary` (AncillaryTranche per product), pay-as-clear
+     availability at the `reserve_group` price, awards capped by `max_award_mw`; the simulator
+     checks every interval that awards are sustainable (`Battery.check_reserves`). Assumptions
+     (sustain of regulation, utilisation, caps, group) are TODO in `market.yaml`.
    - Walk-forward monthly splits; report pre- and post-2023 separately.
+   - Heavy runs go through `uv run limited --mem-gb 100 --cpus 8 -- <cmd>` (CPU affinity + RSS
+     watchdog; cgroup limits are not enforced on this host). Always `env -u UV_INDEX` for uv.
 
 ## Repository layout
 ```
