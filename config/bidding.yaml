@@ -30,4 +30,4 @@ feasibility:
 #   true   reserves fit beside any energy flow (raise + discharge <= P)
 #   false  the plan may hold more than P of raise by charging; that charge is committed
 #          price-taking (clears at any price)
-firm_reserves: true
+firm_reserves: false          # 12 months: hybrid 23.80 M vs firm 23.62 M SGD
