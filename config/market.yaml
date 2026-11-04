@@ -1,0 +1,23 @@
+# Singapore NEMS market parameters. Units: MW, MWh, SGD/MWh, hours.
+# Values marked TODO must be checked against the challenge rules.
+
+timezone: Asia/Singapore     # interval-start convention
+interval_h: 0.5              # 30-minute dispatch/pricing intervals
+intervals_per_day: 48
+
+n_tranches: 10               # K price-quantity tranches per product (TODO: confirm)
+
+price_floor: -4500.0         # SGD/MWh (TODO: confirm)
+price_cap: 4500.0            # SGD/MWh (TODO: confirm)
+
+products:
+  energy: true
+  regulation: true
+  primary_reserve: true
+  contingency_reserve: true
+
+# Energy that must be held per MW of reserve award (SOC headroom).
+reserve_sustain_h:
+  primary_reserve: 0.1666666667   # ~10 minutes
+  contingency_reserve: 0.5        # 30 minutes
+  regulation: null                # TODO: depends on how regulation is activated/settled

@@ -1,0 +1,10 @@
+# EMC pre-dispatch archive. EMC refreshes the schedule every 30 min, ~1-2 min after each
+# period starts (hh:00 / hh:30, any whole-hour timezone), so fetch at hh:04 and hh:34.
+# Missed runs (machine off, network down) cannot be recovered later.
+# Proxy/CA settings come from ~/.bashrc (sourced by predispatch.sh).
+#
+# Install (appends to your existing crontab):
+#   (crontab -l 2>/dev/null; cat crontab/predispatch.cron) | crontab -
+# Logs: logs/predispatch.log (JSON lines). Data: data/raw/predispatch/<feed>/<date>/*.parquet
+
+4,34 * * * * /home/cortesdonascimentral/battery-optimisation/crontab/predispatch.sh

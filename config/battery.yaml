@@ -1,0 +1,15 @@
+# Battery (BESS) parameters. Units: MW, MWh, SGD/MWh.
+# Never hard-code these in code; load from here.
+
+p_max_mw: 100.0          # charge and discharge power limit
+e_max_mwh: 100.0         # usable energy capacity (1-hour battery)
+
+soc_min: 0.0             # MWh
+soc_max: 100.0           # MWh
+soc_init: 50.0           # MWh, state of charge at the start of the horizon
+
+# Round-trip efficiency 85%, split symmetrically: eta_c = eta_d = sqrt(0.85)
+eta_c: 0.9219544457      # charging efficiency
+eta_d: 0.9219544457      # discharging efficiency
+
+kappa_sgd_per_mwh: 5.0   # linear degradation cost per MWh of throughput

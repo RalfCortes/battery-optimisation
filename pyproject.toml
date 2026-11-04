@@ -1,0 +1,48 @@
+[project]
+name = "battery-optimisation"
+version = "0.1.0"
+description = "BESS bidding pipeline for Singapore's NEMS real-time market"
+readme = "README.md"
+authors = [
+    { name = "ralfcortes", email = "ralf.cortesdonascimento@rte-france.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "ipykernel>=7.4.0",
+    "nbformat>=5.11.1",
+    "numpy>=2.5.4",
+    "plotly>=7.1.0",
+    "polars>=2.1.0",
+    "pyyaml>=6.0.3",
+    "requests>=2.34.2",
+    "structlog>=26.1.0",
+    "typer>=0.27.3",
+]
+
+[project.scripts]
+nems = "battery_optimisation.cli.nems:app"
+predispatch = "battery_optimisation.cli.predispatch:app"
+
+[build-system]
+requires = ["uv_build>=0.12.0,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[[tool.uv.index]]
+url = "https://pkgs.dev.azure.com/AssistFlux-Project/AssistFlux/_packaging/package-registry/pypi/simple/"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
+]
