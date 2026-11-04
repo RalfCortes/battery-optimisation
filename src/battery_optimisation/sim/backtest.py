@@ -139,8 +139,9 @@ def run_strategy(
     dispatch = simulator.run(strategy)
     simulate_time = time.perf_counter() - t0
 
-    if name is StrategyName.PERFECT_FORESIGHT:
-        # With a perfect forecast, the simulator must reproduce the plans exactly.
+    if name is StrategyName.PERFECT_FORESIGHT and horizon is not Horizon.ROLLING:
+        # With a perfect forecast, the simulator must reproduce the plans exactly (rolling
+        # plans overlap: their objectives do not add up).
         profit = dispatch.profit_sgd
         if abs(profit - strategy.planned_profit_sgd) > 1e-6 * max(1.0, abs(profit)):
             raise RuntimeError(
