@@ -28,12 +28,13 @@ clearing simulator on held-out data.
    - Never sample steps independently (creates fake spreads and overtrading).
    - Reserve activation = historical event frequency; regulation utilisation = empirical distribution.
 2. **Optimisation** (`src/optim/`)
-   - `lp.py`: standard battery LP/MILP, used for the baseline and the perfect-foresight benchmark.
+   - `milp.py`: standard battery MILP, used for the baseline and the perfect-foresight benchmark.
      - Separate charge/discharge variables, η_c and η_d, SOC bounds, power limits, terminal SOC value.
      - **Always include one binary per interval forbidding simultaneous charge and discharge.**
      - Reserve/regulation headroom on both power and SOC.
      - Linear degradation cost κ per MWh throughput.
-     - Solver: HiGHS via linopy (or Pyomo). Size is tiny; expect ms solve times.
+     - Solver: HiGHS via `highspy` modelling API (no pandas/xarray). A full year (17,520 binaries)
+       solves in ~5 s.
    - `sdp.py`: main engine. Backward SDP over a SOC grid (50–100 levels) and price scenarios
      → value function V_t(SOC) and its slope (water value). One net action per stage;
      ancillary allocation solved inside the stage.
@@ -45,24 +46,41 @@ clearing simulator on held-out data.
    - `ancillary.py`: reserve/regulation offer price = expected activation cost + degradation
      + value of SOC headroom held.
    - `sweep.py`: parametric price sweep (re-solve with price at t on a grid) as a sanity check.
-   - Baseline strategy: self-schedule the LP plan at floor/cap prices.
+   - Baseline strategy: self-schedule the MILP plan at floor/cap prices (`ScheduleStrategy`).
 4. **Simulator / backtest** (`src/sim/`)
    - Price-taker clearing, interval by interval, no look-ahead:
      discharge tranche clears if offer ≤ realised price; charge if offer ≥ realised price; same for ancillaries.
    - Apply activations, update SOC, book revenue and degradation, assert no limit breached.
+   - Core objects (keep this split when adding products):
+     - `Battery` (`battery.py`): physics + SOC state; the only place η, κ and limits live. The MILP
+       reads its `charge_gain` / `discharge_loss` coefficients; `step()` raises `LimitBreachError`.
+     - `Market` (`sim/clearing.py`): realised prices, `clear(IntervalOffers) -> Cleared`;
+       `MarketView` = what is known before an interval (past prices only).
+     - `Forecaster` protocol (`forecast/base.py`): `forecast(view, end)`. `PerfectForecaster` is the
+       oracle for the benchmark; real models (Chronos, ...) implement the same protocol.
+     - `Strategy` protocol (`sim/simulator.py`): `offers(view, soc_mwh) -> IntervalOffers`.
+       `ScheduleStrategy(forecaster, ..., horizon)` = MILP plan self-scheduled (`bidding/strategy.py`).
+     - `Simulator(market, battery).run(strategy) -> Dispatch`: plain loop, strategy → market →
+       battery. `Dispatch` (`sim/dispatch.py`) holds the per-interval frame + metrics.
+     - `sim/backtest.py`: runs + `RunSummary` (pydantic), saved to `runs/<name>/`
+       (`summary.json`, `dispatch.parquet`); CLI `uv run backtest perfect-foresight`.
    - Walk-forward monthly splits; report pre- and post-2023 separately.
 
 ## Repository layout
 ```
 src/
   data/       # loaders for EMC/EMA data, cleaning, regime flags
-  forecast/   # chronos wrapper, covariates, scenarios.py
-  optim/      # lp.py, sdp.py
-  bidding/    # water_value.py, compress.py, feasibility.py, ancillary.py, sweep.py
-  sim/        # clearing.py, backtest.py, metrics.py
+  forecast/   # base.py (Forecaster), perfect.py, chronos wrapper, covariates, scenarios.py
+  battery.py  # Battery: physics + state
+  config.py   # pydantic configs
+  columns.py  # Col: every column name
+  optim/      # milp.py, sdp.py
+  bidding/    # strategy.py, water_value.py, compress.py, feasibility.py, ancillary.py, sweep.py
+  sim/        # clearing.py (Market), simulator.py, dispatch.py, backtest.py, metrics.py
   cli/        # thin typer apps (registered in [project.scripts]); no logic
-  config/     # battery.yaml, market.yaml, run.yaml
-tests/
+tests/       # synthetic.py: shared synthetic prices, forecasters, strategies
+config/      # battery.yaml, market.yaml (repo root)
+runs/        # backtest outputs (git-ignored)
 notebooks/    # exploration only; no logic that the pipeline depends on
 data/         # raw/ and processed/ (git-ignored)
 ```
@@ -75,6 +93,12 @@ data/         # raw/ and processed/ (git-ignored)
 
 ## Conventions
 - Python 3.11+, managed with uv. Format with ruff, type-hint public functions.
+- **Typed names, never bare strings.** Every categorical identifier is a `StrEnum`: columns
+  (`Col.USEP`, `Col.INTERVAL_START` in `columns.py`), data series (`NemsSeries`), feeds
+  (`Feed.ENERGY`, `Feed.ANCILLARY`), products (`Product`), etc. Public functions take the enum,
+  not `str`. Structured config/records are **pydantic** models (`BatteryConfig`, `MarketConfig` in
+  `config.py`; `extra="forbid"`, frozen). Bare strings only for external formats (CSV headers, URLs).
+  New column → add it to `Col` first.
 - Dataframe processing in **polars** (not pandas). Polars has no index: time series frames carry a
   sorted `interval_start` column (Datetime, tz Asia/Singapore, interval-start convention), first column.
 - Store data as parquet (raw downloads included).
@@ -82,6 +106,9 @@ data/         # raw/ and processed/ (git-ignored)
 - Logging with **structlog** (`structlog.get_logger(__name__)`, event name + key-value fields);
   entry points call `battery_optimisation.logs.configure_logging()`. No `print`/stdlib `logging` in library code.
 - Every module has unit tests; the simulator has an end-to-end test on a small synthetic day.
+- **TDD** for every new feature or behaviour change: write or update the test first, run it and see
+  it fail for the right reason, then implement until it passes. Bug fixes start with a test that
+  reproduces the bug. Shared synthetic data helpers live in `tests/synthetic.py`.
 - Prefer clear, small functions over frameworks. No deep RL unless explicitly requested.
 
 ## Required tests / invariants

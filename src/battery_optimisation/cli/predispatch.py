@@ -8,21 +8,19 @@ Examples::
 
 from __future__ import annotations
 
-from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from battery_optimisation.data import predispatch
+from battery_optimisation.data.predispatch import Feed
 from battery_optimisation.logs import configure_logging
 
 # Plain tracebacks: cron logs are JSON lines, not a terminal.
 app = typer.Typer(
     help="EMC pre-dispatch forecast archive.", no_args_is_help=True, pretty_exceptions_enable=False
 )
-
-Feed = StrEnum("Feed", {name: name for name in predispatch.FEEDS})
 
 
 @app.callback()
@@ -39,9 +37,8 @@ def fetch(
 ) -> None:
     """Fetch the current pre-dispatch run and append it to the archive."""
     configure_logging(json=json_logs)
-    feeds = [f.value for f in feed] if feed else None
     try:
-        predispatch.archive(feeds, raw_dir, overwrite)
+        predispatch.archive(feed or tuple(Feed), raw_dir, overwrite)
     except RuntimeError:
         raise typer.Exit(code=1) from None  # details already logged per feed
 

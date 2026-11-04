@@ -1,1 +1,155 @@
-"""Walk-forward backtest over monthly splits."""
+"""Backtest runs: a strategy through the simulator over a window, summarised and saved.
+
+A run is saved as a folder (``RunFiles``):
+  summary.json      ``RunSummary`` (pydantic): settings, totals, monthly and daily statistics
+  dispatch.parquet  ``Dispatch.frame``: one row per interval (USEP, MW, SOC, revenue, profit)
+Load it back with ``load_run``.
+"""
+
+from __future__ import annotations
+
+import time
+from datetime import date, datetime, timedelta
+from enum import StrEnum
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import polars as pl
+import structlog
+from pydantic import BaseModel, ConfigDict
+
+from battery_optimisation.battery import Battery
+from battery_optimisation.bidding.strategy import Horizon, ScheduleStrategy
+from battery_optimisation.columns import Col
+from battery_optimisation.config import BatteryConfig, MarketConfig
+from battery_optimisation.data.nems import TZ, NemsSeries, load_nems
+from battery_optimisation.forecast.perfect import PerfectForecaster
+from battery_optimisation.sim.clearing import Market
+from battery_optimisation.sim.dispatch import Dispatch
+from battery_optimisation.sim.metrics import Period, PeriodStats
+from battery_optimisation.sim.simulator import Simulator
+
+log = structlog.get_logger(__name__)
+
+DEFAULT_RUNS_DIR = Path(__file__).resolve().parents[3] / "runs"
+
+
+class StrategyName(StrEnum):
+    PERFECT_FORESIGHT = "perfect_foresight"  # ScheduleStrategy + PerfectForecaster
+
+
+class RunFiles(StrEnum):
+    SUMMARY = "summary.json"
+    DISPATCH = "dispatch.parquet"
+
+
+class RunSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    strategy: StrategyName
+    horizon: Horizon
+    start: date
+    end: date  # inclusive
+    days: int
+    created_at: datetime
+    battery: BatteryConfig
+    interval_h: float
+    planned_profit_sgd: float  # sum of MILP objectives (on forecast prices)
+    plans: int  # number of MILP solves
+    solve_time_s: float  # MILP time
+    simulate_time_s: float  # whole simulation, including MILP time
+    total: PeriodStats
+    profit_per_day_sgd: float
+    cycles_per_day: float
+    monthly: list[PeriodStats]
+    daily: list[PeriodStats]
+
+    @property
+    def name(self) -> str:
+        return f"{self.strategy}_{self.horizon}_{self.start}_{self.end}"
+
+
+def last_months_window(months: int, end: date | None = None) -> tuple[date, date]:
+    """``months`` whole months ending on ``end`` (default: last day with USEP history)."""
+    if end is None:
+        usep = load_nems(series=[NemsSeries.USEP]).drop_nulls(Col.USEP)
+        end = usep[Col.INTERVAL_START].max().date()
+    year, month = divmod(end.month - 1 - months, 12)
+    year += end.year
+    try:
+        start = end.replace(year=year, month=month + 1)
+    except ValueError:  # e.g. 31st in a shorter month
+        start = end.replace(year=year, month=month + 2, day=1) - timedelta(days=1)
+    return start + timedelta(days=1), end
+
+
+def run_perfect_foresight(
+    start: date,
+    end: date,
+    battery: BatteryConfig,
+    market: MarketConfig,
+    horizon: Horizon = Horizon.FULL,
+) -> tuple[RunSummary, Dispatch]:
+    """Perfect-foresight benchmark: MILP on realised USEP, self-scheduled through the simulator."""
+    prices = load_nems(start, end, series=[NemsSeries.USEP]).select(Col.INTERVAL_START, Col.USEP)
+    strategy = ScheduleStrategy(PerfectForecaster(prices), battery, market, horizon)
+
+    t0 = time.perf_counter()
+    dispatch = Simulator(Market(market, prices), Battery(battery)).run(strategy)
+    simulate_time = time.perf_counter() - t0
+
+    # With a perfect forecast, the simulator must reproduce the plans exactly.
+    profit = dispatch.profit_sgd
+    if abs(profit - strategy.planned_profit_sgd) > 1e-6 * max(1.0, abs(profit)):
+        raise RuntimeError(
+            f"simulated profit {profit:.2f} != planned {strategy.planned_profit_sgd:.2f}"
+        )
+    days = (end - start).days + 1
+    total = dispatch.total()
+    summary = RunSummary(
+        strategy=StrategyName.PERFECT_FORESIGHT,
+        horizon=horizon,
+        start=start,
+        end=end,
+        days=days,
+        created_at=datetime.now(ZoneInfo(TZ)),
+        battery=battery,
+        interval_h=market.interval_h,
+        planned_profit_sgd=strategy.planned_profit_sgd,
+        plans=len(strategy.plans),
+        solve_time_s=sum(p.solve_time_s for p in strategy.plans),
+        simulate_time_s=simulate_time,
+        total=total,
+        profit_per_day_sgd=total.profit_sgd / days,
+        cycles_per_day=total.cycles / days,
+        monthly=dispatch.stats(Period.MONTH),
+        daily=dispatch.stats(Period.DAY),
+    )
+    log.info(
+        "backtest.done",
+        run=summary.name,
+        profit_sgd=round(total.profit_sgd),
+        cycles_per_day=round(summary.cycles_per_day, 2),
+        simulate_time_s=round(simulate_time, 1),
+    )
+    return summary, dispatch
+
+
+def save_run(summary: RunSummary, dispatch: Dispatch, runs_dir: Path = DEFAULT_RUNS_DIR) -> Path:
+    run_dir = Path(runs_dir) / summary.name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / RunFiles.SUMMARY).write_text(summary.model_dump_json(indent=2))
+    dispatch.frame.write_parquet(run_dir / RunFiles.DISPATCH)
+    return run_dir
+
+
+def load_run(run_dir: Path) -> tuple[RunSummary, pl.DataFrame]:
+    run_dir = Path(run_dir)
+    summary = RunSummary.model_validate_json((run_dir / RunFiles.SUMMARY).read_text())
+    return summary, pl.read_parquet(run_dir / RunFiles.DISPATCH)
+
+
+def list_runs(runs_dir: Path = DEFAULT_RUNS_DIR) -> list[Path]:
+    """Run folders, most recently written first."""
+    dirs = [p.parent for p in Path(runs_dir).glob(f"*/{RunFiles.SUMMARY}")]
+    return sorted(dirs, key=lambda p: (p / RunFiles.SUMMARY).stat().st_mtime, reverse=True)

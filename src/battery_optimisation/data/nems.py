@@ -20,7 +20,9 @@ Series used here (form ``value`` id -> CSV columns):
   4 "Regulation Prices" (MFP): regulation price and a reference price.
 
 Raw storage: ``data/raw/nems/<series>/<YYYY-MM>.parquet``, one month per file, columns as
-published (renamed to snake_case, typed, plus ``interval_start``).
+published (renamed to ``Col`` names, typed, plus ``interval_start``).
+
+Typed names: series are ``NemsSeries``, reserve groups ``ReserveGroup``, columns ``Col``.
 
 Command line: ``uv run nems download --help`` (see ``battery_optimisation.cli.nems``).
 """
@@ -28,15 +30,17 @@ Command line: ``uv run nems download --help`` (see ``battery_optimisation.cli.ne
 from __future__ import annotations
 
 import io
-import re
 import time
 from collections.abc import Iterable, Iterator
 from datetime import date, datetime, timedelta
+from enum import StrEnum
 from pathlib import Path
 
 import polars as pl
 import requests
 import structlog
+
+from battery_optimisation.columns import Col
 
 log = structlog.get_logger(__name__)
 
@@ -48,28 +52,77 @@ BASE_URL = "https://www.nems.emcsg.com/api/sitecore/DataSync/DataDownload"
 USER_AGENT = "battery-optimisation-data-loader/0.1"
 DEFAULT_RAW_DIR = Path(__file__).resolve().parents[3] / "data" / "raw" / "nems"
 
-SERIES: dict[str, str] = {"usep": "1", "reserve": "3", "regulation": "4"}
+
+class NemsSeries(StrEnum):
+    """Historical series offered by the NEMS download form."""
+
+    USEP = "usep"  # USEP, demand, solar, TCL, RUSEP, MAP, MAPT, TPC flag
+    RESERVE = "reserve"  # primary and contingency reserve prices per reserve group
+    REGULATION = "regulation"  # regulation price
+
+
+class ReserveGroup(StrEnum):
+    """Reserve groups in the reserve price files (PRIRES = primary, CONRES = contingency)."""
+
+    PRIRESA = "PRIRESA"
+    PRIRESB = "PRIRESB"
+    PRIRESC = "PRIRESC"
+    PRIRESD = "PRIRESD"
+    PRIRESE = "PRIRESE"
+    CONRESA = "CONRESA"
+    CONRESB = "CONRESB"
+    CONRESC = "CONRESC"
+    CONRESD = "CONRESD"
+    CONRESE = "CONRESE"
+
+
+# Form ``value`` id of each series on the download endpoint.
+FORM_ID: dict[NemsSeries, str] = {
+    NemsSeries.USEP: "1",
+    NemsSeries.RESERVE: "3",
+    NemsSeries.REGULATION: "4",
+}
+
+# Wide column of each reserve group in ``load_nems``.
+RESERVE_COLUMN: dict[ReserveGroup, Col] = {
+    ReserveGroup.PRIRESA: Col.PRIMARY_A,
+    ReserveGroup.PRIRESB: Col.PRIMARY_B,
+    ReserveGroup.PRIRESC: Col.PRIMARY_C,
+    ReserveGroup.PRIRESD: Col.PRIMARY_D,
+    ReserveGroup.PRIRESE: Col.PRIMARY_E,
+    ReserveGroup.CONRESA: Col.CONTINGENCY_A,
+    ReserveGroup.CONRESB: Col.CONTINGENCY_B,
+    ReserveGroup.CONRESC: Col.CONTINGENCY_C,
+    ReserveGroup.CONRESD: Col.CONTINGENCY_D,
+    ReserveGroup.CONRESE: Col.CONTINGENCY_E,
+}
 
 # Months that ended less than this long ago are re-downloaded (late data may still arrive).
 REFRESH_WINDOW = timedelta(days=21)
 
-_COLUMNS: dict[str, dict[str, str]] = {
-    "usep": {
-        "USEP ($/MWh)": "usep",
-        "LCP ($/MWh)": "lcp",
-        "DEMAND (MW)": "demand_mw",
-        "SOLAR(MW)": "solar_mw",
-        "TCL (MW)": "tcl_mw",
-        "RUSEP ($/MWh)": "rusep",
-        "MAP ($/MWh)": "map",
-        "MAPT ($/MWh)": "mapt",
-        "TPC Applied": "tpc_applied",
+# Source CSV header -> column, per series. Keys are EMC's spelling (external format).
+_INFO_TYPE = "INFORMATION TYPE"  # constant per file ("USEP", "MRP", "MFP"); dropped
+_HEADERS: dict[NemsSeries, dict[str, Col]] = {
+    NemsSeries.USEP: {
+        "USEP ($/MWh)": Col.USEP,
+        "LCP ($/MWh)": Col.LCP,
+        "DEMAND (MW)": Col.DEMAND_MW,
+        "SOLAR(MW)": Col.SOLAR_MW,
+        "TCL (MW)": Col.TCL_MW,
+        "RUSEP ($/MWh)": Col.RUSEP,
+        "MAP ($/MWh)": Col.MAP,
+        "MAPT ($/MWh)": Col.MAPT,
+        "TPC Applied": Col.TPC_APPLIED,
     },
-    "reserve": {"RESERVE GROUP": "reserve_group", "PRICE ($/MWh)": "price"},
-    "regulation": {"PRICE ($/MWh)": "regulation", "REFERENCE PRICE ($/MWh)": "regulation_ref"},
+    NemsSeries.RESERVE: {"RESERVE GROUP": Col.RESERVE_GROUP, "PRICE ($/MWh)": Col.PRICE},
+    NemsSeries.REGULATION: {
+        "PRICE ($/MWh)": Col.REGULATION,
+        "REFERENCE PRICE ($/MWh)": Col.REGULATION_REF,
+    },
 }
-_KEY_COLUMNS = {"date", "period", "interval_start"}
-_TEXT_COLUMNS = {"reserve_group", "tpc_applied"}
+_KEY_HEADERS = {"DATE": Col.DATE, "PERIOD": Col.PERIOD}
+_KEY_COLUMNS = {Col.DATE, Col.PERIOD, Col.INTERVAL_START}
+_TEXT_COLUMNS = {Col.RESERVE_GROUP, Col.TPC_APPLIED}
 
 
 # --------------------------------------------------------------------------- download
@@ -89,12 +142,12 @@ def month_chunks(start: date, end: date) -> Iterator[tuple[date, date]]:
 
 
 def fetch_csv(
-    series: str, start: date, end: date, session: requests.Session | None = None
+    series: NemsSeries, start: date, end: date, session: requests.Session | None = None
 ) -> str | None:
     """Fetch one date range of a series as CSV text, or None if the server has no data."""
     if (end - start).days > 30:
         raise ValueError("NEMS download range is limited to 31 days")
-    return get_csv(SERIES[series], start, end, session)
+    return get_csv(FORM_ID[NemsSeries(series)], start, end, session)
 
 
 def get_csv(
@@ -137,44 +190,52 @@ def get_csv(
     return resp.text
 
 
-def _slug(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+def parse_csv(series: NemsSeries, text: str) -> pl.DataFrame:
+    """Parse a NEMS CSV into typed ``Col`` columns plus a tz-aware ``interval_start``.
 
-
-def parse_csv(series: str, text: str) -> pl.DataFrame:
-    """Parse a NEMS CSV into typed columns plus a tz-aware ``interval_start``."""
+    Raises ``ValueError`` on unknown headers, so a change in EMC's format is noticed.
+    """
+    series = NemsSeries(series)
     df = pl.read_csv(io.StringIO(text), infer_schema=False, null_values=["-"])
-    mapping = {"DATE": "date", "PERIOD": "period", **_COLUMNS[series]}
-    df = df.rename({c: mapping.get(c.strip(), _slug(c)) for c in df.columns})
-    df = df.drop("information_type", strict=False)
+    df = df.drop([c for c in df.columns if c.strip() == _INFO_TYPE])
+    mapping = {**_KEY_HEADERS, **_HEADERS[series]}
+    unknown = {c.strip() for c in df.columns} - mapping.keys()
+    if unknown:
+        raise ValueError(f"unexpected {series} columns: {sorted(unknown)}")
+    df = df.rename({c: mapping[c.strip()] for c in df.columns})
     df = df.with_columns(pl.col(pl.String).str.strip_chars())
 
-    df = df.with_columns(pl.col("period").cast(pl.Int64))
-    bad = df.filter(~pl.col("period").is_between(1, PERIODS_PER_DAY))
+    df = df.with_columns(pl.col(Col.PERIOD).cast(pl.Int64))
+    bad = df.filter(~pl.col(Col.PERIOD).is_between(1, PERIODS_PER_DAY))
     if bad.height:
-        raise ValueError(f"period outside 1..{PERIODS_PER_DAY}: {bad['period'].unique().to_list()}")
+        periods = bad[Col.PERIOD].unique().to_list()
+        raise ValueError(f"period outside 1..{PERIODS_PER_DAY}: {periods}")
 
     numeric = [c for c in df.columns if c not in _KEY_COLUMNS | _TEXT_COLUMNS]
     df = df.with_columns(
         (
-            pl.col("date").str.to_date("%d-%b-%Y").cast(pl.Datetime("us"))
-            + pl.duration(minutes=(pl.col("period") - 1) * 30)
+            pl.col(Col.DATE).str.to_date("%d-%b-%Y").cast(pl.Datetime("us"))
+            + pl.duration(minutes=(pl.col(Col.PERIOD) - 1) * 30)
         )
         .dt.replace_time_zone(TZ)
-        .alias("interval_start"),
+        .alias(Col.INTERVAL_START),
         pl.col(numeric).cast(pl.Float64),
     )
-    if "tpc_applied" in df.columns:
+    if Col.TPC_APPLIED in df.columns:
         df = df.with_columns(
-            pl.col("tpc_applied")
+            pl.col(Col.TPC_APPLIED)
             .str.to_lowercase()
             .replace_strict({"yes": True, "no": False}, return_dtype=pl.Boolean)
         )
-    return df.select("interval_start", "period", pl.exclude(_KEY_COLUMNS))
+    if Col.RESERVE_GROUP in df.columns:
+        unknown_groups = set(df[Col.RESERVE_GROUP].unique()) - set(ReserveGroup)
+        if unknown_groups:
+            raise ValueError(f"unexpected reserve groups: {sorted(unknown_groups)}")
+    return df.select(Col.INTERVAL_START, Col.PERIOD, pl.exclude(_KEY_COLUMNS))
 
 
 def download(
-    series: Iterable[str] = tuple(SERIES),
+    series: Iterable[NemsSeries] = tuple(NemsSeries),
     start: date | None = None,
     end: date | None = None,
     raw_dir: Path = DEFAULT_RAW_DIR,
@@ -191,7 +252,7 @@ def download(
     end = min(end or today, today)
     written: list[Path] = []
     with requests.Session() as session:
-        for name in series:
+        for name in map(NemsSeries, series):
             out_dir = Path(raw_dir) / name
             out_dir.mkdir(parents=True, exist_ok=True)
             for first, last in month_chunks(start, end):
@@ -221,24 +282,23 @@ def download(
 # --------------------------------------------------------------------------- load
 
 
-def _read_series(raw_dir: Path, name: str) -> pl.DataFrame:
-    files = sorted((Path(raw_dir) / name).glob("*.parquet"))
+def _read_series(raw_dir: Path, series: NemsSeries) -> pl.DataFrame:
+    files = sorted((Path(raw_dir) / series).glob("*.parquet"))
     if not files:
-        raise FileNotFoundError(f"no parquet files in {Path(raw_dir) / name}; run download()")
+        raise FileNotFoundError(f"no parquet files in {Path(raw_dir) / series}; run download()")
     df = pl.concat([pl.read_parquet(f) for f in files], how="diagonal_relaxed")
-    keys = ["interval_start", "reserve_group"] if name == "reserve" else ["interval_start"]
-    return df.unique(subset=keys, keep="last", maintain_order=True).drop("period")
-
-
-def _reserve_group_name(group: str) -> str:
-    kind = {"PRIRES": "primary", "CONRES": "contingency"}.get(group[:6], _slug(group[:-1]))
-    return f"{kind}_{group[-1].lower()}"
+    keys = [Col.INTERVAL_START]
+    if series is NemsSeries.RESERVE:
+        keys.append(Col.RESERVE_GROUP)
+    return df.unique(subset=keys, keep="last", maintain_order=True).drop(Col.PERIOD)
 
 
 def _reserve_wide(df: pl.DataFrame) -> pl.DataFrame:
-    wide = df.pivot(on="reserve_group", index="interval_start", values="price")
-    wide = wide.rename({c: _reserve_group_name(c) for c in wide.columns if c != "interval_start"})
-    return wide.select("interval_start", *sorted(c for c in wide.columns if c != "interval_start"))
+    wide = df.pivot(on=Col.RESERVE_GROUP, index=Col.INTERVAL_START, values=Col.PRICE)
+    groups = [ReserveGroup(c) for c in wide.columns if c != Col.INTERVAL_START]
+    wide = wide.rename({g: RESERVE_COLUMN[g] for g in groups})
+    present = [c for c in RESERVE_COLUMN.values() if c in wide.columns]
+    return wide.select(Col.INTERVAL_START, *present)
 
 
 def _to_date(d: date | str) -> date:
@@ -249,22 +309,22 @@ def load_nems(
     start: date | str | None = None,
     end: date | str | None = None,
     raw_dir: Path = DEFAULT_RAW_DIR,
-    series: Iterable[str] = tuple(SERIES),
+    series: Iterable[NemsSeries] = tuple(NemsSeries),
 ) -> pl.DataFrame:
     """Load downloaded NEMS series as one frame keyed by ``interval_start`` (Asia/Singapore).
 
     ``interval_start`` is a sorted, complete 30-minute grid, 48 rows per day, from ``start``
     00:00 to ``end`` 23:30 inclusive (defaults: span of the data). Missing intervals are null.
 
-    Columns (SGD/MWh unless noted): usep, lcp, demand_mw, solar_mw, tcl_mw, rusep, map, mapt,
-    tpc_applied (bool), regulation, regulation_ref, primary_a..e, contingency_a..e.
+    Columns (``Col``; SGD/MWh unless noted): USEP, LCP, DEMAND_MW, SOLAR_MW, TCL_MW, RUSEP,
+    MAP, MAPT, TPC_APPLIED (bool), REGULATION, REGULATION_REF, PRIMARY_A..E, CONTINGENCY_A..E.
     """
     frames = []
-    for name in series:
+    for name in map(NemsSeries, series):
         df = _read_series(raw_dir, name)
-        frames.append(_reserve_wide(df) if name == "reserve" else df)
+        frames.append(_reserve_wide(df) if name is NemsSeries.RESERVE else df)
 
-    stamps = pl.concat([f.select("interval_start") for f in frames])["interval_start"]
+    stamps = pl.concat([f.select(Col.INTERVAL_START) for f in frames])[Col.INTERVAL_START]
     first = _to_date(start) if start else stamps.min().date()
     last = _to_date(end) if end else stamps.max().date()
     grid = pl.datetime_range(
@@ -275,14 +335,15 @@ def load_nems(
         time_unit="us",
         time_zone=TZ,
         eager=True,
-    ).alias("interval_start")
+    ).alias(Col.INTERVAL_START)
 
     out = grid.to_frame()
     for f in frames:
-        out = out.join(f, on="interval_start", how="left")
-    out = out.set_sorted("interval_start")
+        out = out.join(f, on=Col.INTERVAL_START, how="left")
+    out = out.set_sorted(Col.INTERVAL_START)
 
-    n_missing = out.select(pl.all_horizontal(pl.exclude("interval_start").is_null()).sum()).item()
+    all_null = pl.all_horizontal(pl.exclude(Col.INTERVAL_START).is_null())
+    n_missing = out.select(all_null.sum()).item()
     if n_missing:
         log.warning("nems.missing_intervals", missing=n_missing, total=out.height)
     return out
