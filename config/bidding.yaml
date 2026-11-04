@@ -25,3 +25,9 @@ feasibility:
   mode: worst_case
   soc_quantile: 0.05
   margin_pct: 5.0
+
+# With ancillary services (bidding run --ancillary): reserves are committed from a plan.
+#   true   reserves fit beside any energy flow (raise + discharge <= P)
+#   false  the plan may hold more than P of raise by charging; that charge is committed
+#          price-taking (clears at any price)
+firm_reserves: true

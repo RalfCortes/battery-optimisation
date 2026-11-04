@@ -323,9 +323,11 @@ def test_water_value_reserve_plan_uses_the_given_ancillary_forecaster(
     assert dispatch.total().ancillary_sgd > 0
 
 
-def test_energy_bids_do_not_crowd_out_planned_reserves(battery_cfg, market_cfg) -> None:
+@pytest.mark.parametrize("firm", [True, False])
+def test_energy_bids_do_not_crowd_out_planned_reserves(battery_cfg, market_cfg, firm) -> None:
     """Energy curves at t keep the SOC the next interval's planned reserves need, so reserves are
-    offered as planned (only plan changes between issues may scale them)."""
+    offered as planned (only plan changes between issues may scale them). Unless reserves are
+    firm, the charge a plan needs to hold more than P of raise is committed price-taking."""
     from battery_optimisation.config import Product
     from battery_optimisation.sim.clearing import AWARD_COLUMN, price_column
 
@@ -348,8 +350,19 @@ def test_energy_bids_do_not_crowd_out_planned_reserves(battery_cfg, market_cfg) 
         gap=market_cfg.gate_closure_intervals,
         seed=2,
     )
-    strategy = WaterValueStrategy(scen, battery_cfg, market_cfg, load_bidding(), ancillary=True)
+    strategy = WaterValueStrategy(
+        scen, battery_cfg, market_cfg, load_bidding(), ancillary=True, firm_reserves=firm
+    )
     dispatch = Simulator(Market(market_cfg, window, history), Battery(battery_cfg)).run(strategy)
     planned = sum(sum(a.values()) for a in strategy.planned_awards.values())
     awarded = dispatch.frame.select(sum(pl.col(c) for c in AWARD_COLUMN.values())).to_series().sum()
-    assert awarded >= 0.97 * planned
+    assert awarded >= (0.97 if firm else 0.95) * planned
+    raise_cols = [
+        AWARD_COLUMN[p]
+        for p in (Product.REGULATION, Product.PRIMARY_RESERVE, Product.CONTINGENCY_RESERVE)
+    ]
+    most_raise = dispatch.frame.select(sum(pl.col(c) for c in raise_cols)).to_series().max()
+    if firm:
+        assert most_raise <= battery_cfg.p_max_mw + 1e-6
+    else:
+        assert most_raise > battery_cfg.p_max_mw + 1  # backed by committed charging

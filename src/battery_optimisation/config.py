@@ -280,6 +280,8 @@ class BiddingConfig(_Config):
     price_band_margin_sgd_per_mwh: NonNegativeFloat  # offers kept within scenario range +- this
     sweep: SweepConfig
     feasibility: FeasibilityConfig
+    firm_reserves: bool = True  # ancillary: reserves fit beside any energy flow (else committed
+    # price-taking charge backs raise reserves beyond P, as in the plan)
 
 
 def load_bidding(path: Path = CONFIG_DIR / "bidding.yaml") -> BiddingConfig:

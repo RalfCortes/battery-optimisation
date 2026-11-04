@@ -70,3 +70,9 @@ def test_bidding_yaml_loads() -> None:
     assert (
         cfg.sweep.prices[0] == cfg.sweep.price_min and cfg.sweep.prices[-1] == cfg.sweep.price_max
     )
+
+
+def test_bidding_firm_reserves_flag() -> None:
+    from battery_optimisation.config import load_bidding
+
+    assert load_bidding().firm_reserves is True

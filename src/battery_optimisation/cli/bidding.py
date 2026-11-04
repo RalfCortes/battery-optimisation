@@ -51,6 +51,19 @@ def _root() -> None:
     """Water-value bidding backtests."""
 
 
+def bidding_tag(bidding: BiddingConfig, ancillary: bool) -> str:
+    """Output folder suffix: feasibility rule, then ``_as`` (+ ``_hybrid``) with ancillary."""
+    f = bidding.feasibility
+    tag = (
+        "worst_case"
+        if f.mode is FeasibilityMode.WORST_CASE
+        else f"prob_q{f.soc_quantile:g}_m{f.margin_pct:g}"
+    )
+    if ancillary:
+        tag += "_as" + ("" if bidding.firm_reserves else "_hybrid")
+    return tag
+
+
 @app.command()
 def run(
     forecast_run: Annotated[
@@ -64,6 +77,10 @@ def run(
     ancillary: Annotated[
         bool, typer.Option(help="Regulation and reserves too (plan + energy curves).")
     ] = False,
+    firm_reserves: Annotated[
+        bool | None,
+        typer.Option(help="Ancillary: reserves beside any energy flow. Default: config."),
+    ] = None,
 ) -> None:
     """Water-value offers vs self-schedule, price sweep check, comparison of all strategies."""
     configure_logging()
@@ -75,6 +92,8 @@ def run(
     ):
         if value is not None:
             data["feasibility"][key] = value
+    if firm_reserves is not None:
+        data["firm_reserves"] = firm_reserves
     bidding = BiddingConfig.model_validate(data)
     fr = load_forecast_run(forecast_run or list_forecast_runs()[0])
     market = load_market()
@@ -106,12 +125,7 @@ def run(
         runs=ev.runs,
         water_value=ev.water_value,
     )
-    f = bidding.feasibility
-    tag = (
-        "worst_case"
-        if f.mode is FeasibilityMode.WORST_CASE
-        else f"prob_q{f.soc_quantile:g}_m{f.margin_pct:g}"
-    )
+    tag = bidding_tag(bidding, ancillary)
     out = save_bidding(ev, fr.path / f"bidding_{tag}")
     per_interval.write_parquet(out / "sweep.parquet")
 
