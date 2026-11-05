@@ -41,4 +41,5 @@ feasibility:
 #   true   reserves fit beside any energy flow (raise + discharge <= P)
 #   false  the plan may hold more than P of raise by charging; that charge is committed
 #          price-taking (clears at any price)
-firm_reserves: false          # 12 months: hybrid 23.80 M vs firm 23.62 M SGD
+firm_reserves: true           # 12 months, Markov: firm 24.53 M vs hybrid 24.39 M SGD (within noise;
+                              # independent prices had hybrid ahead, 23.80 vs 23.62 M): firm is simpler

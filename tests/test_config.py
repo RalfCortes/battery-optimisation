@@ -75,4 +75,4 @@ def test_bidding_yaml_loads() -> None:
 def test_bidding_firm_reserves_flag() -> None:
     from battery_optimisation.config import load_bidding
 
-    assert load_bidding().firm_reserves is False  # hybrid: better on 12 months
+    assert load_bidding().firm_reserves is True  # Markov: firm 24.53 M vs hybrid 24.39 M (noise)
