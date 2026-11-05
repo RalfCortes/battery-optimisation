@@ -87,9 +87,12 @@ clearing simulator on held-out data.
      (`Horizon.ROLLING`) from the SOC after its committed offers.
      Feasibility `mode: probabilistic` (SOC quantile + margin, `ShortfallPolicy.PENALISE`) exists
      but loses heavily to worst-case on real data (shortfall penalties): keep worst-case.
-     Ancillary (`--ancillary`): per issue, a MILP on mean scenario energy + persistence ancillary
-     prices commits reserves; their power/SOC needs become SDP `StageLimits`; at gate closure the
+     Ancillary (`--ancillary`): per issue, a MILP on mean stage energy price + Chronos ancillary
+     forecasts (`forecast ancillary`; else persistence) commits reserves (firm by default); their power/SOC needs become SDP `StageLimits`; at gate closure the
      awards are scaled to the worst-case SOC and offered at 0, energy curves capped to the rest.
+     12 months with ancillary: daily, water value 24.53 M > self-schedule 24.04 M; half-hourly,
+     self-schedule 25.59 M > water value 24.90 M (its plan holds fewer reserves; median-price plan,
+     hybrid, gate-window protection all tried, no better). Next: reserves chosen inside the SDP.
      CLI: `uv run bidding run` -> `<forecast run>/bidding_<tag>/` (report.json, comparison.md/.csv,
      sweep.parquet, backtests).
 4. **Simulator / backtest** (`src/sim/`)
