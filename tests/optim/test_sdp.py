@@ -79,3 +79,57 @@ def test_stage_limits_keep_soc_in_band_and_power_down(battery_cfg, market_cfg):
     assert held.at(31, 50.0) < held.at(31, 60.0) - 1000
     for t in range(0, n, 6):
         assert np.all(np.diff(held.water_value(t)) <= 1e-6)  # still concave
+
+
+def lattice(rho: float, states: int = 9):
+    from synthetic_forecast import normal_quantiles
+
+    from battery_optimisation.config import load_forecast
+    from battery_optimisation.forecast.markov import price_lattice
+
+    levels = load_forecast().quantile_levels
+    q = normal_quantiles(daily_shape(1), 80.0, levels)
+    return price_lattice(np.asarray(levels), q, states, rho)
+
+
+def test_markov_with_independent_transitions_is_the_stagewise_sdp(battery_cfg, market_cfg):
+    prices, weights = scenarios(n=8)
+    battery, dt = Battery(battery_cfg), market_cfg.interval_h
+    plain = solve_sdp(prices, weights, battery, dt, BIDDING)
+    markov = solve_sdp(prices, weights, battery, dt, BIDDING, transitions=np.tile(weights, (8, 1)))
+    assert markov.values == pytest.approx(plain.values)
+    for t in (0, 20, 47):  # the continuation does not depend on the price
+        cont = markov.continuation_at(t, np.array([-50.0, 100.0, 900.0]))
+        assert cont == pytest.approx(np.broadcast_to(plain.values[t + 1], cont.shape), abs=1e-3)
+        assert plain.continuation_at(t, np.array([10.0])) == pytest.approx(
+            plain.values[t + 1][None]
+        )
+
+
+def test_markov_continuation_is_concave_in_every_state(battery_cfg, market_cfg):
+    """CLAUDE.md invariant, per price state."""
+    lat = lattice(0.8)
+    vf = solve_sdp(
+        lat.prices,
+        lat.weights,
+        Battery(battery_cfg),
+        market_cfg.interval_h,
+        BIDDING,
+        transitions=lat.transitions,
+    )
+    for t in range(0, 48, 6):
+        cont = vf.continuation_at(t, lat.prices[t])
+        slopes = np.diff(cont, axis=1)
+        assert np.all(np.diff(slopes, axis=1) <= 1e-3), f"not concave at t={t}"
+    assert np.all(np.diff(vf.water_value(0)) <= 1e-6)
+
+
+def test_persistent_prices_remove_fake_spreads(battery_cfg, market_cfg):
+    """Same marginals: independent stages promise spreads that correlated prices do not give."""
+    battery, dt = Battery(battery_cfg), market_cfg.interval_h
+    value = {}
+    for rho in (0.0, 0.9):
+        lat = lattice(rho)
+        vf = solve_sdp(lat.prices, lat.weights, battery, dt, BIDDING, transitions=lat.transitions)
+        value[rho] = vf.at(0, battery_cfg.soc_init)
+    assert value[0.9] < 0.8 * value[0.0]

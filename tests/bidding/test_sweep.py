@@ -52,3 +52,43 @@ def test_compression_gap_is_small(battery_cfg) -> None:
     grid = prices()
     gap = np.abs(offered_net_mw(offers, grid) - optimal_net_mw(vf, 0, 50.0, b, DT, grid))
     assert gap.mean() < 10.0  # MW, averaged over the price grid
+
+
+def markov_vf(battery_cfg, market_cfg):
+    from synthetic import daily_shape
+    from synthetic_forecast import normal_quantiles
+
+    from battery_optimisation.config import load_bidding, load_forecast
+    from battery_optimisation.forecast.markov import price_lattice
+    from battery_optimisation.optim.sdp import solve_sdp
+
+    levels = load_forecast().quantile_levels
+    lat = price_lattice(
+        np.asarray(levels), normal_quantiles(daily_shape(1), 80.0, levels), states=9, rho=0.8
+    )
+    vf = solve_sdp(
+        lat.prices,
+        lat.weights,
+        Battery(battery_cfg),
+        market_cfg.interval_h,
+        load_bidding(),
+        transitions=lat.transitions,
+    )
+    return vf, lat
+
+
+@pytest.mark.parametrize("soc", [10.0, 50.0, 87.3])
+def test_markov_curve_is_the_optimal_response(battery_cfg, market_cfg, soc) -> None:
+    """With price states, the best action depends on what the price says about later prices:
+    the curve still clears the re-solved optimum, at every price within the states' range."""
+    vf, lat = markov_vf(battery_cfg, market_cfg)
+    b, t = Battery(battery_cfg, soc), 30
+    discharge, charge = offer_curve(vf, t, soc, b, DT)
+    grid = np.sort(np.random.default_rng(1).uniform(lat.prices[t, 0], lat.prices[t, -1], 300))
+    best = optimal_net_mw(vf, t, soc, b, DT, grid)
+    offered = offered_net_mw(as_offers(discharge + charge), grid)
+    assert np.mean(np.abs(offered - best)) < 1.0  # MW: price-grid resolution only
+    assert np.all(np.diff(best) >= -1e-9)  # still a supply curve
+    d = [tr.price for tr in discharge]
+    c = [tr.price for tr in charge]
+    assert d == sorted(d) and c == sorted(c, reverse=True)

@@ -274,6 +274,18 @@ class FeasibilityConfig(_Config):
     margin_pct: NonNegativeFloat  # of usable capacity, widens the probabilistic bounds
 
 
+class PriceModel(StrEnum):
+    """How the water-value SDP sees prices across stages."""
+
+    INDEPENDENT = "independent"  # stagewise marginals of the copula scenarios
+    MARKOV = "markov"  # price states from the quantiles, persisting (forecast/markov.py)
+
+
+class MarkovConfig(_Config):
+    states: int = Field(ge=2)  # price states per stage
+    rho: float | None = Field(default=None, ge=0, lt=1)  # lag-1 correlation; None: copula's
+
+
 class BiddingConfig(_Config):
     soc_levels: int = Field(ge=3)  # SOC grid points from soc_min to soc_max
     terminal_penalty_sgd_per_mwh: PositiveFloat  # per MWh below soc_init at the end of the day
@@ -282,6 +294,8 @@ class BiddingConfig(_Config):
     feasibility: FeasibilityConfig
     firm_reserves: bool = True  # ancillary: reserves fit beside any energy flow (else committed
     # price-taking charge backs raise reserves beyond P, as in the plan)
+    price_model: PriceModel = PriceModel.INDEPENDENT
+    markov: MarkovConfig = MarkovConfig(states=11)
 
 
 def load_bidding(path: Path = CONFIG_DIR / "bidding.yaml") -> BiddingConfig:

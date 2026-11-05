@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 import polars as pl
 from pydantic import BaseModel
 
+from battery_optimisation.bidding.stages import stage_source
 from battery_optimisation.bidding.strategy import Horizon, ScheduleStrategy, WaterValueStrategy
 from battery_optimisation.bidding.sweep import StepGap, SweepStats
 from battery_optimisation.columns import Col
@@ -103,9 +104,11 @@ def evaluate_bidding(
     history: pl.DataFrame | None = None,
     ancillary: bool = False,
     ancillary_quantiles: pl.DataFrame | None = None,
+    copula_lag1: dict[date, float] | None = None,
 ) -> BiddingEvaluation:
     """Perfect foresight, self-schedule and water value over ``realised``'s window, all planned
-    with ``horizon`` (DAY for daily forecasts, ROLLING for intraday ones)."""
+    with ``horizon`` (DAY for daily forecasts, ROLLING for intraday ones). ``copula_lag1``:
+    walk-forward copula lag-1 correlation by month start (Markov prices without a set rho)."""
     keep = [Col.INTERVAL_START, Col.USEP]
     # realised ancillary prices are traded; forecast by stored quantiles (else persistence)
     if ancillary:
@@ -118,7 +121,12 @@ def evaluate_bidding(
         else None
     )
     water_value = WaterValueStrategy(
-        scenarios, battery, market, bidding, ancillary=ancillary, ancillary_forecaster=stored
+        stage_source(scenarios, quantiles, bidding, copula_lag1),
+        battery,
+        market,
+        bidding,
+        ancillary=ancillary,
+        ancillary_forecaster=stored,
     )
     median: Forecaster = QuantileForecaster(quantiles, level=0.5)
     if ancillary:

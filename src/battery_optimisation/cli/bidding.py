@@ -29,6 +29,7 @@ from battery_optimisation.columns import Col
 from battery_optimisation.config import (
     BiddingConfig,
     FeasibilityMode,
+    PriceModel,
     load_battery,
     load_bidding,
     load_market,
@@ -52,13 +53,16 @@ def _root() -> None:
 
 
 def bidding_tag(bidding: BiddingConfig, ancillary: bool) -> str:
-    """Output folder suffix: feasibility rule, then ``_as`` (+ ``_hybrid``) with ancillary."""
+    """Output folder suffix: feasibility rule, ``_markov`` (+ ``_r<rho>`` if fixed) for Markov
+    prices, then ``_as`` (+ ``_hybrid``) with ancillary."""
     f = bidding.feasibility
     tag = (
         "worst_case"
         if f.mode is FeasibilityMode.WORST_CASE
         else f"prob_q{f.soc_quantile:g}_m{f.margin_pct:g}"
     )
+    if bidding.price_model is PriceModel.MARKOV:
+        tag += "_markov" + ("" if bidding.markov.rho is None else f"_r{bidding.markov.rho:g}")
     if ancillary:
         tag += "_as" + ("" if bidding.firm_reserves else "_hybrid")
     return tag
@@ -81,6 +85,10 @@ def run(
         bool | None,
         typer.Option(help="Ancillary: reserves beside any energy flow. Default: config."),
     ] = None,
+    price_model: Annotated[PriceModel | None, typer.Option(help="Default: config.")] = None,
+    rho: Annotated[
+        float | None, typer.Option(help="Markov lag-1 correlation. Default: config, else copula.")
+    ] = None,
 ) -> None:
     """Water-value offers vs self-schedule, price sweep check, comparison of all strategies."""
     configure_logging()
@@ -94,6 +102,10 @@ def run(
             data["feasibility"][key] = value
     if firm_reserves is not None:
         data["firm_reserves"] = firm_reserves
+    if price_model is not None:
+        data["price_model"] = price_model
+    if rho is not None:
+        data["markov"]["rho"] = rho
     bidding = BiddingConfig.model_validate(data)
     fr = load_forecast_run(forecast_run or list_forecast_runs()[0])
     market = load_market()
@@ -113,10 +125,22 @@ def run(
         history=history,
         ancillary=ancillary,
         ancillary_quantiles=fr.ancillary_quantiles,
+        copula_lag1={s.period_start: s.copula_lag1 for s in fr.report.scenarios},
     )
     if ancillary:
         source = "Chronos-2" if fr.ancillary_quantiles is not None else "persistence"
         typer.echo(f"Ancillary prices forecast by {source}")
+    m = bidding.markov
+    typer.echo(
+        f"Water value prices: {bidding.price_model}"
+        + (
+            f" ({m.states} states, rho "
+            + ("walk-forward copula" if m.rho is None else f"{m.rho:g}")
+            + ")"
+            if bidding.price_model is PriceModel.MARKOV
+            else ""
+        )
+    )
     grid = np.asarray(bidding.sweep.prices)
     stats, per_interval = sweep(ev.water_value, grid)
     steps = sweep_breakdown(ev.water_value, grid)

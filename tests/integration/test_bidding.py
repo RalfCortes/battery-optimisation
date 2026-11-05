@@ -107,7 +107,10 @@ def test_bidding_report(battery_cfg, market_cfg) -> None:
         )
         for _, part in prices.group_by(pl.col(Col.INTERVAL_START).dt.date(), maintain_order=True)
     )
-    ev = evaluate_bidding(scen, qf, prices, battery_cfg, market_cfg, load_bidding())
+    from battery_optimisation.config import PriceModel
+
+    independent = load_bidding().model_copy(update={"price_model": PriceModel.INDEPENDENT})
+    ev = evaluate_bidding(scen, qf, prices, battery_cfg, market_cfg, independent)
     r = ev.report
     by_name = {c.strategy: c for c in r.results}
     assert set(by_name) == {
@@ -366,3 +369,124 @@ def test_energy_bids_do_not_crowd_out_planned_reserves(battery_cfg, market_cfg, 
         assert most_raise <= battery_cfg.p_max_mw + 1e-6
     else:
         assert most_raise > battery_cfg.p_max_mw + 1  # backed by committed charging
+
+
+def quantiles_for(prices: pl.DataFrame, sigma: float, gap: int) -> pl.DataFrame:
+    from synthetic_forecast import normal_quantiles, quantile_frame
+
+    from battery_optimisation.config import load_forecast
+
+    levels = load_forecast().quantile_levels
+    return pl.concat(
+        quantile_frame(
+            part[Col.INTERVAL_START][0] - timedelta(minutes=30 * gap),
+            normal_quantiles(part[Col.USEP].to_numpy(), sigma, levels),
+            levels,
+            gap=gap,
+        )
+        for _, part in prices.group_by(pl.col(Col.INTERVAL_START).dt.date(), maintain_order=True)
+    )
+
+
+def markov_bidding(rho: float | None = 0.8):
+    from battery_optimisation.config import PriceModel
+
+    bidding = load_bidding()
+    markov = bidding.markov.model_copy(update={"rho": rho})
+    return bidding.model_copy(update={"price_model": PriceModel.MARKOV, "markov": markov})
+
+
+def test_markov_water_value_never_breaches_limits(battery_cfg, market_cfg) -> None:
+    from battery_optimisation.bidding.stages import LatticeStages
+
+    prices = make_prices(daily_shape(DAYS, seed=4))
+    qf = quantiles_for(prices, 80.0, market_cfg.gate_closure_intervals)
+    bidding = markov_bidding()
+    stages = LatticeStages(qf, bidding.markov.states, lambda _: 0.8)
+    strategy = WaterValueStrategy(stages, battery_cfg, market_cfg, bidding)
+    dispatch = run(strategy, prices, battery_cfg, market_cfg)
+    assert dispatch.profit_sgd > 0
+    assert len(strategy.value_functions) == DAYS
+    issue = next(iter(strategy.value_functions))
+    assert strategy.stage_prices(issue).shape == (48, bidding.markov.states)
+
+
+def test_markov_with_exact_quantiles_approaches_the_benchmark(battery_cfg, market_cfg) -> None:
+    from battery_optimisation.bidding.stages import LatticeStages
+
+    prices = make_prices(daily_shape(DAYS, seed=6))
+    qf = quantiles_for(prices, 1e-3, market_cfg.gate_closure_intervals)
+    bidding = markov_bidding()
+    stages = LatticeStages(qf, bidding.markov.states, lambda _: 0.8)
+    bid = run(
+        WaterValueStrategy(stages, battery_cfg, market_cfg, bidding),
+        prices,
+        battery_cfg,
+        market_cfg,
+    )
+    pf = run(
+        ScheduleStrategy(PerfectForecaster(prices), battery_cfg, market_cfg, Horizon.DAY),
+        prices,
+        battery_cfg,
+        market_cfg,
+    )
+    assert bid.profit_sgd == pytest.approx(pf.profit_sgd, rel=0.05)
+
+
+@pytest.mark.parametrize("rho", [0.8, None])
+def test_bidding_report_with_markov_prices(battery_cfg, market_cfg, rho) -> None:
+    """``evaluate_bidding`` builds the lattice from the quantiles; rho from the config, else
+    from the walk-forward copula of each month."""
+    from datetime import date
+
+    from battery_optimisation.bidding.report import evaluate_bidding
+
+    prices = make_prices(daily_shape(DAYS, seed=8))
+    gap = market_cfg.gate_closure_intervals
+    qf = quantiles_for(prices, 60.0, gap)
+    scen = scenario_frame(prices, n=5, noise=60.0, gap=gap, seed=2)
+    ev = evaluate_bidding(
+        scen,
+        qf,
+        prices,
+        battery_cfg,
+        market_cfg,
+        markov_bidding(rho),
+        copula_lag1={date(2026, 1, 1): 0.7},
+    )
+    assert ev.report.sdp_days == DAYS
+    assert ev.water_value.stage_prices(next(iter(ev.water_value.value_functions))).shape[1] == 11
+
+
+def test_markov_water_value_with_ancillary_services(battery_cfg, market_cfg) -> None:
+    """Reserve plan + Markov price states: awards stay sustainable (the simulator checks) and
+    reserves add profit."""
+    from battery_optimisation.bidding.stages import LatticeStages
+    from battery_optimisation.config import Product
+    from battery_optimisation.sim.clearing import price_column
+
+    rng = np.random.default_rng(0)
+    base = make_prices(daily_shape(DAYS + 1, seed=4))
+    prices = base.with_columns(
+        pl.Series(price_column(Product.REGULATION, market_cfg), rng.uniform(15, 35, base.height)),
+        pl.Series(
+            price_column(Product.PRIMARY_RESERVE, market_cfg), rng.uniform(5, 15, base.height)
+        ),
+        pl.Series(
+            price_column(Product.CONTINGENCY_RESERVE, market_cfg), rng.uniform(10, 30, base.height)
+        ),
+    )
+    history, window = prices.slice(0, 48), prices.slice(48)
+    qf = quantiles_for(
+        window.select(Col.INTERVAL_START, Col.USEP), 40.0, market_cfg.gate_closure_intervals
+    )
+    bidding = markov_bidding()
+
+    def run_hist(ancillary: bool):
+        stages = LatticeStages(qf, bidding.markov.states, lambda _: 0.8)
+        strategy = WaterValueStrategy(stages, battery_cfg, market_cfg, bidding, ancillary=ancillary)
+        return Simulator(Market(market_cfg, window, history), Battery(battery_cfg)).run(strategy)
+
+    energy_only, both = run_hist(False), run_hist(True)
+    assert both.total().ancillary_sgd > 0
+    assert both.profit_sgd > energy_only.profit_sgd

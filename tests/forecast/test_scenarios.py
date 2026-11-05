@@ -2,8 +2,8 @@ from statistics import NormalDist
 
 import numpy as np
 import pytest
-from battery_optimisation.forecast.quantiles import pit
 
+from battery_optimisation.forecast.quantiles import pit
 from battery_optimisation.forecast.scenarios import (
     GaussianCopula,
     reduce_scenarios,

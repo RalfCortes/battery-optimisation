@@ -4,6 +4,17 @@ soc_levels: 101                        # SOC grid points from soc_min to soc_max
 terminal_penalty_sgd_per_mwh: 10000    # per MWh below soc_init at the end of the delivery day
                                        # (same end-of-day rule as the self-schedule baseline)
 
+# How the SDP sees prices across stages (bidding/stages.py):
+#   independent  stagewise marginals of the copula scenarios: ignores that prices persist, so the
+#                SDP sees fake spreads (expects 25 M SGD on a year where perfect foresight makes 16 M)
+#   markov       price states from the quantile forecasts, persisting with lag-1 correlation rho
+#                (forecast/markov.py); offer curves = the optimal response to each price
+# 12 months (daily issues): independent 6.98 M, markov 7.77 M (copula rho) SGD
+price_model: markov
+markov:
+  states: 11       # equal-probability price states per stage
+  rho: null        # lag-1 correlation; null: walk-forward copula of each month (~0.77)
+
 # Offer only tranches that could clear: discharge priced <= the highest scenario price of the
 # interval (+ margin), charge priced >= the lowest (- margin). Unoffered capacity is not counted
 # in the worst-case SOC of later intervals (gate closure), so it stays available to them.

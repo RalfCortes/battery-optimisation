@@ -1,11 +1,11 @@
 """Parametric price sweep: does the offer curve give the optimal response? (CLAUDE.md check)
 
-For an interval t, fix its price to each value on a grid and re-solve the stage: with
-stagewise-independent prices V_{t+1} does not depend on the price at t, so the optimum is
+For an interval t, fix its price to each value on a grid and re-solve the stage:
 
-    max over reachable s'  [ price * sold(s -> s') - degradation(s -> s') + V_{t+1}(s') ]
+    max over reachable s'  [ price * sold(s -> s') - degradation(s -> s') + V_after(s'; price) ]
 
-(V_{t+1} is piecewise linear, so the optimum is at a grid point or a power limit). Compare with
+(V_after = V_{t+1} with stagewise-independent prices; with Markov prices it depends on the
+price at t, ``ValueFunction.continuation_at``; ``water_value.optimal_net_mw``). Compare with
 the net MW the submitted offers clear at that price (market rules). Uncompressed curves match
 exactly; gaps on real offers measure compression to K tranches, the price-band trim and the
 gate-closure feasibility caps.
@@ -17,30 +17,13 @@ import numpy as np
 import polars as pl
 from pydantic import BaseModel
 
-from battery_optimisation.battery import TOL, Battery
+from battery_optimisation.battery import Battery
 from battery_optimisation.bidding.strategy import CurveStep, WaterValueStrategy
+from battery_optimisation.bidding.water_value import optimal_net_mw
 from battery_optimisation.columns import Col
-from battery_optimisation.optim.sdp import ValueFunction
 from battery_optimisation.sim.clearing import IntervalOffers, Side
 
 MATCH_MW = 1.0  # |offered - optimal| below this counts as matching
-
-
-def optimal_net_mw(
-    vf: ValueFunction, t: int, soc: float, battery: Battery, dt: float, prices: np.ndarray
-) -> np.ndarray:
-    """Optimal net MW (discharge - charge) in interval ``t`` from ``soc`` for each price."""
-    here = Battery(battery.config, soc)
-    lo = soc - here.max_discharge_mw(dt) * here.discharge_loss(dt)
-    hi = soc + here.max_charge_mw(dt) * here.charge_gain(dt)
-    grid = vf.soc[(vf.soc > lo + TOL) & (vf.soc < hi - TOL)]
-    target = np.unique(np.concatenate([[lo, soc, hi], grid]))
-    discharge = np.where(target < soc, (soc - target) / here.discharge_loss(dt), 0.0)
-    charge = np.where(target > soc, (target - soc) / here.charge_gain(dt), 0.0)
-    net = discharge - charge
-    base = np.interp(target, vf.soc, vf.values[t + 1]) - here.degradation_sgd(charge, discharge, dt)
-    value = np.asarray(prices)[:, None] * net[None, :] * dt + base[None, :]  # [prices, targets]
-    return net[value.argmax(axis=1)]
 
 
 def offered_net_mw(offers: IntervalOffers, prices: np.ndarray) -> np.ndarray:

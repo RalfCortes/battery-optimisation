@@ -52,21 +52,33 @@ clearing simulator on held-out data.
      - Linear degradation cost κ per MWh throughput.
      - Solver: HiGHS via `highspy` modelling API (no pandas/xarray). A full year (17,520 binaries)
        solves in ~5 s.
-   - `sdp.py`: main engine. Backward SDP over a SOC grid (50–100 levels) and price scenarios
-     → value function V_t(SOC) and its slope (water value). One net action per stage;
+   - `sdp.py`: main engine. Backward SDP over a SOC grid (50–100 levels) and price states
+     (Markov transitions, or stagewise-independent scenarios) → value function V_t(SOC) and its
+     slope (water value). One net action per stage;
      ancillary allocation solved inside the stage.
 3. **Bidding** (`src/bidding/`)
    - `water_value.py`: tranche price = slope of V_{t+1} over the SOC range the tranche spans,
-     divided by η_d, plus κ (discharge); times η_c, minus κ (charge).
+     divided by η_d, plus κ (discharge); times η_c, minus κ (charge). With Markov prices the
+     continuation depends on the price itself: curve = optimal response on a price grid.
    - `compress.py`: compress the curve to K tranches, breakpoints where the slope is steepest.
    - `feasibility.py`: cap tranche sizes using worst-case SOC at gate closure.
    - `ancillary.py`: reserve/regulation offer price = expected activation cost + degradation
      + value of SOC headroom held.
    - `sweep.py`: parametric price sweep (re-solve with price at t on a grid) as a sanity check.
    - Baseline strategy: self-schedule the MILP plan at floor/cap prices (`ScheduleStrategy`).
-   - Current implementation (`config/bidding.yaml`, `WaterValueStrategy`): one SDP per delivery day
-     on the copula scenarios (stagewise marginals, 101 SOC levels, terminal penalty below soc_init =
-     same end-of-day rule as the baseline). Per interval, at gate closure: curve from V_{t+1} around
+   - Current implementation (`config/bidding.yaml`, `WaterValueStrategy`): one SDP per forecast
+     issue (101 SOC levels, terminal penalty below soc_init = same end-of-day rule as the baseline).
+     Price stages (`bidding/stages.py`, `price_model`):
+     - `markov` (default): `LatticeStages`, 11 equal-probability price states per stage from the
+       quantile forecast, AR(1) transitions in normal-score space (`forecast/markov.py`, Tauchen),
+       rho = walk-forward copula lag-1 of the month (or `markov.rho`). V per state; offer curve =
+       optimal response on a price grid (`water_value.optimal_net_mw`, value after t depends on
+       the price at t: `ValueFunction.continuation_at`).
+     - `independent`: `ScenarioStages`, stagewise marginals of the copula scenarios. Ignores price
+       persistence -> fake spreads: the SDP expected 25 M SGD/yr where perfect foresight makes 16 M,
+       and re-planning more often made it *worse* (rolling 6.74 M < daily 6.98 M). Markov: daily
+       7.77 M, rolling 8.29 M (rho 0.83). Never go back to independent stages.
+     Per interval, at gate closure: curve from V_{t+1} around
      the *expected* SOC (own pending offers cleared under the scenarios) -> trim to the scenario price
      band (+- margin) -> compress to K -> tranches beyond the band made price-taking (floor/cap,
      certain) -> feasibility from the worst-case SOC (price-taking tranches count as cleared).

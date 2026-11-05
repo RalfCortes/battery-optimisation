@@ -25,6 +25,7 @@ from battery_optimisation.bidding.feasibility import (
     soc_quantiles_after,
     soc_range_after,
 )
+from battery_optimisation.bidding.stages import ScenarioStages, StageSource
 from battery_optimisation.bidding.water_value import (
     offer_curve,
     price_take_beyond_band,
@@ -187,7 +188,7 @@ class WaterValueStrategy:
 
     def __init__(
         self,
-        scenarios: pl.DataFrame,
+        scenarios: pl.DataFrame | StageSource,
         battery: BatteryConfig,
         market: MarketConfig,
         bidding: BiddingConfig,
@@ -204,14 +205,12 @@ class WaterValueStrategy:
         # than P of raise (or discharge for lower) is committed price-taking
         self.firm_reserves = bidding.firm_reserves if firm_reserves is None else firm_reserves
         self._plan_awards: dict[datetime, dict[Product, float]] = {}  # target -> planned MW
-        ordered = scenarios.sort(Col.ISSUED_AT, Col.SCENARIO, Col.INTERVAL_START)
-        self._scenarios = ordered
-        issues = ordered[Col.ISSUED_AT]
-        self._issues: list[datetime] = issues.unique(maintain_order=True).to_list()
-        starts = issues.search_sorted(pl.Series(self._issues), side="left").to_list()
-        self._rows = dict(
-            zip(self._issues, zip(starts, [*starts[1:], ordered.height], strict=True), strict=True)
+        # per-issue price stages: copula scenarios (frame) or any StageSource (Markov lattice)
+        self._stages: StageSource = (
+            ScenarioStages(scenarios) if isinstance(scenarios, pl.DataFrame) else scenarios
         )
+        self._issues: list[datetime] = self._stages.issues
+        self._transitions: dict[datetime, np.ndarray | None] = {}
         self.value_functions: dict[datetime, ValueFunction] = {}  # by issue time
         self._issue_prices: dict[datetime, tuple[list[datetime], np.ndarray, np.ndarray]] = {}
         self.expected_profit_sgd: dict[datetime, float] = {}
@@ -235,23 +234,14 @@ class WaterValueStrategy:
         return sum(v.solve_time_s for v in self.value_functions.values())
 
     def stage_prices(self, issue: datetime) -> np.ndarray:
-        """Scenario prices [T, K] the issue's SDP used."""
+        """Price states (scenarios) [T, K] the issue's SDP used."""
         return self._issue_prices[issue][1]
 
     def _load_issue(self, issue: datetime) -> tuple[list[datetime], np.ndarray, np.ndarray]:
         if issue not in self._issue_prices:
-            a, b = self._rows[issue]
-            part = self._scenarios.slice(a, b - a)
-            scenario_ids = part[Col.SCENARIO].unique(maintain_order=True).to_list()
-            wide = part.pivot(on=Col.SCENARIO, index=Col.INTERVAL_START, values=Col.USEP_FORECAST)
-            wide = wide.sort(Col.INTERVAL_START)
-            prices = wide.select([str(k) for k in scenario_ids]).to_numpy()  # [T, K]
-            weights = part.unique(Col.SCENARIO, maintain_order=True)[Col.WEIGHT].to_numpy()
-            self._issue_prices[issue] = (
-                wide[Col.INTERVAL_START].to_list(),
-                prices,
-                weights.astype(float) / weights.sum(),
-            )
+            st = self._stages.load(issue)
+            self._issue_prices[issue] = (st.stamps, st.prices, st.weights)
+            self._transitions[issue] = st.transitions
         return self._issue_prices[issue]
 
     def _issue_for(self, view: MarketView) -> tuple[datetime, int]:
@@ -335,6 +325,7 @@ class WaterValueStrategy:
                 self.market.interval_h,
                 self.bidding,
                 limits=limits,
+                transitions=self._transitions[issue],
             )
             self.value_functions[issue] = vf
             self.expected_profit_sgd[issue] = vf.at(stage, soc_mwh)

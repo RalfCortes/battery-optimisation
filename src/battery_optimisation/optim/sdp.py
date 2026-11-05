@@ -1,11 +1,17 @@
 """Stochastic dynamic programming over a SOC grid: value function and water value.
 
 Stages t = 0..T-1 are the intervals of a delivery day. Before interval t the price is unknown;
-it is drawn from that step's scenario values (weighted), independently of earlier steps
-(stagewise marginals). The battery observes the price and moves between SOC grid points
-(one net action per stage) within its power limits:
+it is one of the step's K price states. The battery observes it and moves between SOC grid
+points (one net action per stage) within its power limits. Per state k at stage t:
 
-    V_t(s) = sum_k w_k max_{s'} [price_{t,k} sold(s -> s') - degradation(s -> s') + V_{t+1}(s')]
+    V_t(s, k) = max_{s'} [price_{t,k} sold(s -> s') - degradation(s -> s') + C_t(s', k)]
+    C_t(s', k) = sum_j P(j | k) V_{t+1}(s', j)          (continuation; C_{T-1} = terminal)
+
+Without ``transitions`` the states are drawn independently each stage with ``weights``
+(stagewise marginals: P(j | k) = w_j, so C_t(s', k) = V_{t+1}(s') for every k). With a
+``transitions`` matrix the price persists (Markov, ``forecast.markov``): a high price now means
+high prices next, which removes the fake spreads of independent stages. The reported
+V_t(s) = sum_k pi_t(k) V_t(s, k), pi_0 = weights, pi_{t+1} = pi_t P.
 
 Terminal value (same rule as the self-schedule baseline, which must end the day at >= soc_init):
     V_T(s) = -terminal_penalty * max(0, soc_target - s)
@@ -32,6 +38,24 @@ class ValueFunction:
         np.ndarray
     )  # [T + 1, N]: values[t] = V_t (before acting in interval t); values[T] terminal
     solve_time_s: float
+    # Markov prices only: state prices [T, K] (increasing in k) and C_t(s', k) [T, K, N]
+    state_prices: np.ndarray | None = None
+    continuation: np.ndarray | None = None
+
+    def continuation_at(self, t: int, prices: np.ndarray) -> np.ndarray:
+        """Value after interval ``t`` [P, N] if its price turns out to be each of ``prices``:
+        V_{t+1} for independent stages; for Markov prices, C_t interpolated between the states
+        by price (constant beyond the extreme states)."""
+        prices = np.atleast_1d(np.asarray(prices, float))
+        if self.continuation is None:
+            return np.broadcast_to(self.values[t + 1], (prices.size, self.soc.size))
+        states = self.state_prices[t] + 1e-9 * np.arange(self.state_prices.shape[1])
+        position = np.interp(prices, states, np.arange(states.size, dtype=float))
+        lo = np.floor(position).astype(int)
+        hi = np.minimum(lo + 1, states.size - 1)
+        f = (position - lo)[:, None]
+        cont = self.continuation[t]
+        return (1 - f) * cont[lo] + f * cont[hi]
 
     def at(self, t: int, soc: float) -> float:
         return float(np.interp(soc, self.soc, self.values[t]))
@@ -63,8 +87,10 @@ def solve_sdp(
     cfg: BiddingConfig,
     soc_target: float | None = None,
     limits: StageLimits | None = None,
+    transitions: np.ndarray | None = None,
 ) -> ValueFunction:
-    """Backward recursion. ``prices`` [T, K] scenario values per stage, ``weights`` [K].
+    """Backward recursion. ``prices`` [T, K] state (scenario) values per stage, ``weights`` [K];
+    ``transitions`` [K, K] (rows: from state) for Markov prices, else stagewise independent.
 
     ``limits``: per-stage power caps (hard) and SOC band (penalised like the terminal rule, at
     the start of the stage and at its end) left by ancillary commitments."""
@@ -85,6 +111,15 @@ def solve_sdp(
     values[-1] = terminal_values(soc, target, cfg.terminal_penalty_sgd_per_mwh)
     penalty = cfg.terminal_penalty_sgd_per_mwh
 
+    if transitions is not None:  # per-state values, state occupancy pi_t
+        transitions = np.asarray(transitions, float)
+        state_values = np.broadcast_to(values[-1], (prices.shape[1], soc.size))
+        continuation = np.empty((n_stages, prices.shape[1], soc.size))
+        occupancy = np.empty((n_stages, prices.shape[1]))
+        occupancy[0] = weights
+        for t in range(1, n_stages):
+            occupancy[t] = occupancy[t - 1] @ transitions
+
     def outside(lo: float, hi: float) -> np.ndarray:
         return -penalty * (np.maximum(lo - soc, 0.0) + np.maximum(soc - hi, 0.0))
 
@@ -101,7 +136,22 @@ def solve_sdp(
             lo, hi = limits.soc_low[t], limits.soc_high[t]
             end_band = outside(lo, hi)[None, :]  # end of stage t
             start_band = outside(lo, hi)  # start of stage t
-        base = np.where(ok, values[t + 1][None, :] - degradation + end_band, -np.inf)  # [N, N]
-        best = (prices[t][:, None, None] * sold[None] + base[None]).max(axis=2)  # [K, N]
-        values[t] = weights @ best + start_band
-    return ValueFunction(soc=soc, values=values, solve_time_s=time.perf_counter() - t0)
+        if transitions is None:
+            base = np.where(ok, values[t + 1][None, :] - degradation + end_band, -np.inf)  # [N, N]
+            best = (prices[t][:, None, None] * sold[None] + base[None]).max(axis=2)  # [K, N]
+            values[t] = weights @ best + start_band
+            continue
+        cont = transitions @ state_values if t < n_stages - 1 else state_values  # [K, N]
+        continuation[t] = cont
+        base = np.where(ok[None], cont[:, None, :] - degradation[None] + end_band, -np.inf)
+        state_values = (prices[t][:, None, None] * sold[None] + base).max(axis=2) + start_band
+        values[t] = occupancy[t] @ state_values
+    if transitions is None:
+        return ValueFunction(soc=soc, values=values, solve_time_s=time.perf_counter() - t0)
+    return ValueFunction(
+        soc=soc,
+        values=values,
+        solve_time_s=time.perf_counter() - t0,
+        state_prices=np.asarray(prices, float),
+        continuation=continuation,
+    )
