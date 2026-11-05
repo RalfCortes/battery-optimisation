@@ -71,6 +71,9 @@ def run(
     reuse_quantiles: Annotated[
         bool, typer.Option(help="Reuse the run folder's saved quantiles (skip Chronos-2).")
     ] = False,
+    issue_every: Annotated[
+        int | None, typer.Option(help="Issue cadence in intervals (48 = daily). Default: config.")
+    ] = None,
 ) -> None:
     """Walk-forward Chronos-2 quantiles -> monthly copula scenarios -> stats and capture rates."""
     configure_logging()
@@ -79,6 +82,8 @@ def run(
         data["weather"]["model"] = weather_model
     if covariates:
         data["covariates"] = covariates
+    if issue_every is not None:
+        data["issue_every_intervals"] = issue_every
     cfg = ForecastConfig.model_validate(data)
     battery, market = load_battery(), load_market()
 
