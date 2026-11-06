@@ -585,6 +585,7 @@ def test_priced_reserve_offers(battery_cfg, market_cfg) -> None:
         ReservePlanner,
     )
     from battery_optimisation.sim.clearing import price_column
+    from battery_optimisation.sim.storage_rules import lower_mw, raise_mw
 
     rng = np.random.default_rng(0)
     base = make_prices(daily_shape(DAYS + 1, seed=4))
@@ -623,6 +624,15 @@ def test_priced_reserve_offers(battery_cfg, market_cfg) -> None:
             assert sum(t.quantity_mw for t in mine) <= market_cfg.ancillary.max_award_mw[p] + 1e-6
             priced += sum(t.price > 0 for t in mine)
     assert priced > 0  # not everything at 0: the curves carry prices
+    # the energy curve keeps room for the mix planned at the expected prices (the reserves that
+    # will usually clear); extra reserves that clear are settled against energy by the engine
+    rules, p_max = market_cfg.storage_rules, battery_cfg.p_max_mw
+    for at, offers in strategy.submitted.items():
+        planned = strategy.planned_awards[at]
+        sold = sum(t.quantity_mw for t in offers.on(Side.DISCHARGE))
+        bought = sum(t.quantity_mw for t in offers.on(Side.CHARGE))
+        assert sold + raise_mw(rules, planned) <= p_max + 0.5
+        assert bought + lower_mw(rules, planned) <= p_max + 0.5
 
 
 def test_priced_reserve_offers_need_market_feasibility(battery_cfg, market_cfg) -> None:

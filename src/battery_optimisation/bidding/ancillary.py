@@ -19,6 +19,11 @@ with pi (the objective has increasing differences in (x_p, pi)), and each step o
 the price where holding those MW starts to pay for the energy value they displace and the SoC
 headroom they take: the opportunity cost. Each step becomes one tranche (price, MW), and the
 curve is compressed to the offer format's K pairs per product.
+
+The energy curve keeps room for the mix chosen at the expected prices (what usually clears);
+reserves that clear beyond it are settled against energy and the SoC by the market engine
+(surplus, RC386). On real weeks this beat both room for the certain part only (MW held at
+price 0) and room for the whole curve (``WaterValueStrategy._reserve_curves``).
 """
 
 from __future__ import annotations

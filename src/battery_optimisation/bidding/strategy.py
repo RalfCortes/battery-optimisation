@@ -656,8 +656,8 @@ class WaterValueStrategy:
         """``reserve_offers: curve``: for each product, the MW the gate-closure choice would hold
         at each of its prices (the others at their expected value), over every valid reserve mix
         at ``soc`` (corners for each energy action); each step priced at its opportunity cost
-        (``bidding.ancillary``). Returns the mix chosen at the expected prices (the plan), the
-        tranches, and the MW held at price 0 (certain: the energy curve must fit beside it)."""
+        (``bidding.ancillary``). Returns the mix chosen at the expected prices (the plan, and
+        what the energy curve keeps room for), the tranches, and that mix as an array."""
         rs, dt, m = self._reserves, self.market.interval_h, self.market
         value = self._expected_reserve_value(vf, issue, t)
         o = self._energy_options(vf, t, soc)
@@ -680,14 +680,13 @@ class WaterValueStrategy:
         states = states if states.ndim == 2 else states[None, :]
         highest = ((states - extra) / dt).max(axis=0)  # [P] SGD/MW/h
         chosen = mixes[np.argmax(base + mixes @ value)]
-        tranches, certain = [], np.zeros(len(rs.products))
+        tranches = []
         for i, p in enumerate(rs.products):
             grid = np.linspace(0.0, 3.0 * max(highest[i], 1.0), self.RESERVE_GRID_POINTS)
             mw = reserve_curve(mixes, base, value, extra, i, grid, dt)
-            certain[i] = mw[0]
             tranches += curve_tranches(grid, mw, p, m.n_tranches)
         awards = dict(zip(rs.products, map(float, chosen), strict=True))
-        return awards, tuple(t for t in tranches if t.product in m.ancillary_products), certain
+        return awards, tuple(t for t in tranches if t.product in m.ancillary_products), chosen
 
     def _ancillary_prices(self, known, end: datetime) -> pl.DataFrame:
         if self.ancillary_forecaster is not None:
@@ -781,12 +780,13 @@ class WaterValueStrategy:
         steps: dict[CurveStep, IntervalOffers] = {}
         allowed = None
         if self.priced_reserves:
-            awards, tranches, certain = self._reserve_curves(vf, issue, t, reference)
+            awards, tranches, chosen = self._reserve_curves(vf, issue, t, reference)
             self._plan_awards[at] = awards  # the plan: the mix best at the expected prices
             self._reserve_offers[at] = tranches
-            # the energy curve may use whatever is not committed for certain (offered at 0);
-            # if more reserves clear, the engine settles them against energy by surplus
-            allowed = self._energy_options(vf, t, reference).fits(certain)
+            # the energy curve keeps room for the mix planned at the expected prices (what
+            # usually clears; room for the certain part only, or for the whole curve, did worse
+            # on real weeks); reserves cleared beyond it are settled against energy by the engine
+            allowed = self._energy_options(vf, t, reference).fits(chosen)
         elif self._reserves is not None:
             awards, allowed = self._choose_reserves(vf, issue, t, reference)
             self._plan_awards[at] = awards
