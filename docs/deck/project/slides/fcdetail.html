@@ -1,0 +1,16 @@
+<section id="fcdetail" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:64px;font-weight:700;line-height:1.1">Forecast set-up in detail</h2>
+<table style="font-size:26px;color:#14213D;width:1664px">
+<tr><th style="width:26%;text-align:left">Item</th><th style="width:74%;text-align:left">Setting (config/forecast.yaml)</th></tr>
+<tr><td>Model</td><td>Chronos-2 zero-shot, 21 native quantiles, 28-day context, GPU</td></tr>
+<tr style="background:#EEF1F5"><td>Issue time</td><td>At gate closure, 2 intervals before delivery; every half-hour (rolling 48 steps)</td></tr>
+<tr><td>Known covariates</td><td>Calendar (time of day, weekday, holiday), price-cap regime flag, weather</td></tr>
+<tr style="background:#EEF1F5"><td>Past-only covariates</td><td>System demand (no archived demand forecasts yet)</td></tr>
+<tr><td>Weather</td><td>ECMWF IFS 06Z/18Z runs, 3×3 grid around Singapore; temperature, humidity, cloud, irradiance, rain</td></tr>
+<tr style="background:#EEF1F5"><td>Weather “as of”</td><td>For issue T: the latest run r with r + availability delay ≤ T. Never the “previous day” series (published later)</td></tr>
+<tr><td>Targets</td><td>USEP and the regulation, primary and contingency prices (group A)</td></tr>
+<tr style="background:#EEF1F5"><td>Leakage rule</td><td>build_input only takes data strictly before the issue time; tested</td></tr>
+</table>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">Walk-forward: everything fitted for month M (copula, persistence) uses issues realised before M only</p>
+<aside>Weather runs are downloaded paced and resumable (429 backoff); a missing run falls back to the latest usable older run and is counted in the report.</aside>
+</section>

@@ -1,0 +1,27 @@
+<section id="engineering" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:64px;font-weight:700;line-height:1.1">Engineering state</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<h3 style="font-size:34px;font-weight:600;color:#2F6690">Code</h3>
+<ul style="font-size:26px;line-height:1.45;color:#3D4A5C">
+<li>Python, uv, polars, pydantic configs, typer CLIs, HiGHS</li>
+<li>All parameters in YAML: battery, market (incl. storage rules), bidding, forecast</li>
+<li>244 tests, written test-first; the simulator raises on any rule breach</li>
+<li>CLIs: forecast run · forecast ancillary · bidding run · bidding explore · backtest</li>
+<li>Every run kept (bidding/&lt;tag&gt;/&lt;time&gt;/) with offers, the decision trace and each decision’s plan</li>
+</ul>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px">
+<h3 style="font-size:34px;font-weight:600;color:#B35C10">Water value: time per forecast issue</h3>
+<table style="font-size:26px;color:#14213D;width:780px">
+<tr><th style="width:62%;text-align:left">SDP with reserves</th><th style="width:38%;text-align:right">Time</th></tr>
+<tr><td>Point reserve prices, numpy</td><td style="text-align:right">~25 ms / issue</td></tr>
+<tr style="background:#EEF1F5"><td>Reserve price states, numpy</td><td style="text-align:right">223 ms / issue</td></tr>
+<tr><td>Reserve price states, numba (4 CPUs)</td><td style="text-align:right">58 ms / issue</td></tr>
+</table>
+<p style="font-size:26px;line-height:1.45;color:#3D4A5C">A 12-month half-hourly run takes 40–60 min with all three strategies (17,520 issues).</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">Today’s work not yet committed to main</p>
+<aside>Numba runs only on the reserve-state path and the plan recording, so the default results are unchanged to the last digit.</aside>
+</section>

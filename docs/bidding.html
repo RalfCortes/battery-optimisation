@@ -1,0 +1,290 @@
+<title>Offer Construction</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']], tags: 'none' },
+  svg: { fontCache: 'global' },
+  options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+};
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg-full.min.js" defer></script>
+<style>
+/* Layout: textbook chapter. Sticky contents rail on wide screens, one reading column, equations in their own scroll boxes. */
+:root {
+  --paper: #f4f6f9;
+  --panel: #ffffff;
+  --ink: #131923;
+  --muted: #586273;
+  --rule: #d6dce5;
+  --accent: #1a56c4;
+  --accent-soft: #e4ecfb;
+  --warm: #a24a07;
+  --warm-soft: #fbeee2;
+  --good: #1f7a4d;
+  --good-soft: #e3f3ea;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0d1219; --panel: #141b26; --ink: #e5eaf1; --muted: #97a2b2; --rule: #253043;
+    --accent: #7ea8ff; --accent-soft: #1a2640; --warm: #f2a65e; --warm-soft: #2c2016;
+    --good: #6fd19c; --good-soft: #142a20; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0d1219; --panel: #141b26; --ink: #e5eaf1; --muted: #97a2b2; --rule: #253043;
+  --accent: #7ea8ff; --accent-soft: #1a2640; --warm: #f2a65e; --warm-soft: #2c2016;
+  --good: #6fd19c; --good-soft: #142a20; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink);
+  font-family: var(--body); font-size: 17px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 80px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 48px; }
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-family: var(--display); font-size: 14px; }
+nav.toc p { margin: 0 0 8px; text-transform: uppercase; letter-spacing: .08em; font-size: 12px; color: var(--muted); font-weight: 600; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+nav.toc a { color: var(--ink); text-decoration: none; display: flex; gap: 8px; }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); }
+nav.toc .n { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 2.2em; padding-top: 2px; }
+main { min-width: 0; max-width: 760px; }
+header.top { margin-bottom: 40px; }
+.eyebrow { font-family: var(--display); text-transform: uppercase; letter-spacing: .1em; font-size: 12px; font-weight: 700; color: var(--accent); }
+h1 { font-family: var(--display); font-stretch: 85%; font-weight: 800; font-size: clamp(32px, 5vw, 46px); line-height: 1.05; margin: 8px 0 16px; text-wrap: balance; }
+h2 { font-family: var(--display); font-stretch: 88%; font-weight: 750; font-size: 28px; line-height: 1.15; margin: 64px 0 12px; text-wrap: balance; scroll-margin-top: 24px; }
+h3 { font-family: var(--display); font-weight: 650; font-size: 19px; margin: 28px 0 6px; }
+.lede { font-size: 19px; color: var(--muted); max-width: 62ch; }
+p, li { max-width: 68ch; }
+a { color: var(--accent); }
+code { font-family: var(--mono); font-size: .86em; background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+.eq { overflow-x: auto; overflow-y: hidden; margin: 14px 0; padding: 4px 0; }
+mjx-container[display="true"] { margin: 0 !important; }
+.box { border: 1px solid var(--rule); background: var(--panel); border-radius: 10px; padding: 18px 22px; margin: 20px 0; }
+.box > :first-child { margin-top: 0; }
+.box > :last-child { margin-bottom: 0; }
+.key { border-left: 4px solid var(--accent); background: var(--accent-soft); border-radius: 0 10px 10px 0; padding: 14px 20px; margin: 20px 0; }
+.key > :first-child { margin-top: 0; } .key > :last-child { margin-bottom: 0; }
+.warn { border-left: 4px solid var(--warm); background: var(--warm-soft); border-radius: 0 10px 10px 0; padding: 14px 20px; margin: 20px 0; }
+.warn > :first-child { margin-top: 0; } .warn > :last-child { margin-bottom: 0; }
+.label { font-family: var(--display); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; color: var(--muted); margin: 0 0 4px; }
+.method { border-top: 2px solid var(--ink); margin-top: 56px; padding-top: 4px; }
+.method h2 { margin-top: 10px; display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+.tag { font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--paper); background: var(--ink); padding: 2px 8px; border-radius: 5px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; margin: 14px 0 18px; font-family: var(--display); font-size: 14px; }
+.facts div { background: var(--panel); padding: 10px 12px; min-width: 0; }
+.facts b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 700; margin-bottom: 2px; }
+.verdict { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }
+.verdict > div { border-radius: 8px; padding: 12px 16px; min-width: 0; }
+.verdict .pro { background: var(--good-soft); }
+.verdict .con { background: var(--warm-soft); }
+.verdict ul { margin: 4px 0 0; padding-left: 18px; font-size: 15.5px; }
+.verdict .pro .label { color: var(--good); } .verdict .con .label { color: var(--warm); }
+.steps { counter-reset: s; list-style: none; padding: 0; display: grid; gap: 10px; }
+.steps li { counter-increment: s; position: relative; padding-left: 40px; }
+.steps li::before { content: counter(s); position: absolute; left: 0; top: 2px; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-family: var(--mono); font-size: 13px; font-weight: 600; display: grid; place-items: center; }
+figure { margin: 24px 0; }
+.trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.trio > div { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 12px 10px; min-width: 0; }
+.trio svg { width: 100%; height: auto; display: block; }
+.trio h4 { font-family: var(--display); font-size: 15px; margin: 8px 0 2px; }
+.trio p { font-size: 14.5px; margin: 0; color: var(--muted); line-height: 1.45; }
+figcaption { font-size: 14.5px; color: var(--muted); margin-top: 10px; }
+.tablewrap { overflow-x: auto; margin: 18px 0; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); }
+table { border-collapse: collapse; font-family: var(--display); font-size: 14px; min-width: 820px; width: 100%; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 700; background: var(--paper); }
+tr:last-child td { border-bottom: 0; }
+td.m { font-family: var(--mono); font-weight: 600; white-space: nowrap; }
+.num { font-variant-numeric: tabular-nums; }
+.yes { color: var(--good); font-weight: 650; } .no { color: var(--warm); font-weight: 650; }
+.refs { font-size: 15px; } .refs li { margin-bottom: 6px; }
+.part2head { margin-top: 96px; padding-top: 32px; border-top: 6px double var(--rule); scroll-margin-top: 24px; }
+.method ul { padding-left: 20px; }
+svg .ln { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+svg .lnA { stroke: var(--accent); stroke-width: 2.2; fill: none; }
+svg .nd { fill: var(--panel); stroke: var(--ink); stroke-width: 1.6; }
+svg .ndA { fill: var(--accent); stroke: var(--accent); stroke-width: 1.6; }
+svg .ax { stroke: var(--rule); stroke-width: 1; }
+svg text { fill: var(--muted); font-family: var(--mono); font-size: 11px; }
+@media (max-width: 960px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  nav.toc { position: static; border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; background: var(--panel); }
+  nav.toc ol { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+}
+@media (max-width: 620px) {
+  body { font-size: 16px; }
+  .trio, .verdict { grid-template-columns: minmax(0, 1fr); }
+  h2 { font-size: 24px; }
+}
+</style>
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#rules"><span class="n">§1</span>The offer rules</a></li>
+    <li><a href="#timeline"><span class="n">§2</span>One decision, in time</a></li>
+    <li><a href="#curve"><span class="n">§3</span>From value to curve</a></li>
+    <li><a href="#steps"><span class="n">§4</span>The pipeline steps</a></li>
+    <li><a href="#reserves"><span class="n">§5</span>Reserve offers</a></li>
+    <li><a href="#shapes"><span class="n">§6</span>What curves look like</a></li>
+    <li><a href="#results"><span class="n">§7</span>Results</a></li>
+    <li><a href="#gaps"><span class="n">§8</span>Gaps and next steps</a></li>
+    <li><a href="#refs"><span class="n">§9</span>References</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="top">
+  <div class="eyebrow">Layer 3 · Bidding</div>
+  <h1>Offer Construction</h1>
+  <p class="lede">How the water value becomes NEMS offers for energy, regulation and reserves: the market's offer rules, the timing of a decision, each step from the SDP's response to a compliant 5-step offer, what the curves look like in practice, and what is still missing.</p>
+</header>
+
+<h2 id="rules">§1 The offer rules (NEMS Market Rules ch. 6, RC383)</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Rule</th><th>Section</th><th>In our code</th></tr></thead>
+  <tbody>
+    <tr><td>Always hold a valid <b>standing offer</b> (by day of week) for every period, for energy and each registered reserve/regulation product</td><td>5.1.1–5.1.3</td><td>Not modelled (we submit per period)</td></tr>
+    <tr><td><b>Offer variations</b> override it; both revisable at any time until <b>65 min before the period</b>; the price can't change after that</td><td>5.1.4, 10.4.1</td><td>Gate closure 2 intervals (decided at t − 60 min in the simulator)</td></tr>
+    <tr><td>The engine uses the last accepted valid offer</td><td>5.8.2–5.8.3</td><td>Rolling re-bid every interval</td></tr>
+    <tr><td>Offered MW must not exceed what is reasonably deliverable by more than max(10 MW, 5%)</td><td>5.1.5, 5.2B.5–6</td><td>Volumes ≤ what the expected SoC can deliver</td></tr>
+    <tr><td>One storage offer: 1–10 pairs in increasing price; pairs 1–5 charge (≤ 0 MW), 6–10 discharge (≥ 0 MW)</td><td>5.2B.2.4</td><td><code>conform</code>, <code>Market.validate</code></td></tr>
+    <tr><td>Prices in $/MWh to 2 decimals within the price limits; 0.0 MW ⇒ $0.00; MW to 1 decimal</td><td>5.2B.3–4</td><td>Rounded (MW rounded down)</td></tr>
+    <tr><td>States a <b>maximum combined transfer limit</b> (energy + reserve + regulation) and ramp rates</td><td>5.2B.2.5–6</td><td><b>Missing</b></td></tr>
+    <tr><td>Reserve and regulation offers: 1–5 pairs each</td><td>5.3.2.5, 5.4.3.4</td><td>Yes</td></tr>
+    <tr><td>Per-class power limits; SoC cut by the engine 10 min before the period</td><td>RC383, RC386</td><td><code>sim/storage_rules.py</code></td></tr>
+  </tbody>
+</table>
+</div>
+<p>The hackathon asks for “bid quantities and prices for Energy, Regulation, Primary Reserve and Contingency Reserve for each trading period”, with storage offers per RC383 §3.1.2. When EMA calls the algorithm (every half-hour or once a day) isn't stated.</p>
+
+<h2 id="timeline">§2 One decision, in time</h2>
+<figure>
+<div class="tablewrap" style="border:0;background:transparent">
+<svg viewBox="0 0 760 170" role="img" aria-label="Timeline: at gate closure for interval t, intervals t minus 1 and t are already locked; the forecast is issued, the SDP solved and the curve for t submitted" style="width:100%;min-width:620px;height:auto;display:block">
+  <line class="ax" x1="20" y1="110" x2="740" y2="110"/>
+  <g>
+    <rect x="80" y="90" width="120" height="40" rx="6" class="ndA" style="opacity:.18"/>
+    <rect x="200" y="90" width="120" height="40" rx="6" class="ndA" style="opacity:.3"/>
+    <rect x="320" y="90" width="120" height="40" rx="6" class="ndA" style="opacity:.3"/>
+    <rect x="440" y="90" width="120" height="40" rx="6" class="ndA" style="opacity:.9"/>
+    <rect x="560" y="90" width="120" height="40" rx="6" class="nd"/>
+  </g>
+  <text x="125" y="150">t − 3</text><text x="245" y="150">t − 2</text><text x="365" y="150">t − 1</text><text x="495" y="150">t</text><text x="605" y="150">t + 1</text>
+  <line class="lnA" x1="200" y1="30" x2="200" y2="135"/>
+  <text x="140" y="22">decision (t − 60 min)</text>
+  <text x="300" y="80">locked: t − 1 and earlier offers</text>
+  <text x="452" y="70">offer for t</text>
+  <text x="560" y="80">later: re-bid next time</text>
+</svg>
+</div>
+<figcaption>At each gate closure the battery submits the curve for interval t. The SoC at the start of t depends on how the still-pending offers (t − 2, t − 1) clear, so the curve is built at the expected SoC.</figcaption>
+</figure>
+<ol class="steps">
+  <li>A new forecast is issued with data strictly before the decision time.</li>
+  <li>The SDP is solved for that issue: value function per SoC and price state (11 bins, or 21 nodes in the continuous version), with reserves chosen inside each stage.</li>
+  <li>The SoC expected at the start of t is computed from the actual SoC and the pending offers cleared under the forecast scenarios.</li>
+  <li>The reserve mix for t is chosen (§5), then the energy curve beside it (§3–4).</li>
+  <li>The offer is made compliant and submitted. Earlier offers can't change; later intervals are re-bid at their own gate closure.</li>
+</ol>
+
+<h2 id="curve">§3 From value function to curve</h2>
+<p>With Markov prices, the value of energy left after t depends on the price at t itself, \(C_t(s' \mid \lambda)\). The curve is the optimal response on a fine price grid (50 points between consecutive price states, plus points beyond the extremes):</p>
+<div class="eq">\[ q_t(\lambda) = \arg\max_{s' \text{ reachable from } s}\ \Big\{ \lambda\,\big(d - c\big)\Delta \;-\; \kappa\,(c + d)\,\Delta \;+\; C_t(s' \mid \lambda) \Big\}, \qquad \text{MW} = d - c. \]</div>
+<p>\(C_t\) already contains the best re-planned future from every \(s'\), so sweeping \(\lambda\) here is equivalent to re-solving the whole future with a different price at t. When \(C_t\) doesn't depend on \(\lambda\) and is concave, the switch points are the familiar water-value thresholds:</p>
+<div class="eq">\[ \text{discharge if } \lambda > \frac{\mu_{t+1}(s)}{\eta_d} + \kappa, \qquad \text{charge if } \lambda < \eta_c\, \mu_{t+1}(s) - \kappa, \qquad \mu_{t+1} = \frac{\partial C_t}{\partial s}. \]</div>
+<p>The response can be non-monotone (a high price announcing higher prices makes charging attractive). One offer must rise with price, so the response is replaced by its closest rising fit (isotonic regression, <code>rising</code>).</p>
+
+<h2 id="steps">§4 The pipeline steps</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Step</th><th>What it does</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td class="m">RAW</td><td>Optimal response on the price grid, rising fit, split into discharge and charge micro-tranches</td><td>The SDP's ideal curve</td></tr>
+    <tr><td class="m">BAND</td><td>Drop tranches that can't clear within the scenario price band ± margin</td><td>No capacity tied up at impossible prices</td></tr>
+    <tr><td class="m">COMPRESSED</td><td>≤ 5 tranches per side; group boundaries at the largest price jumps; MW-weighted price per group; clip to floor/cap</td><td>Offer format</td></tr>
+    <tr><td class="m">PRICE_TAKING</td><td>Tranches that clear at every plausible price go to the floor (discharge) or cap (charge), keeping the increasing order</td><td>Certain volume; counts as cleared for later intervals</td></tr>
+    <tr><td class="m">FEASIBLE</td><td><code>market</code> mode: no SoC caps (the engine cuts to the SoC, RC386); with reserves: planned awards and power caps</td><td>Deliverability</td></tr>
+    <tr><td class="m">CONFORM</td><td>Rounding, ordering, validation against the rules of §1</td><td>Accepted by the market</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Every step is saved per interval (<code>curve_steps</code>), and every submitted tranche is in <code>offers.parquet</code>.</p>
+
+<h2 id="reserves">§5 Reserve offers</h2>
+<ul>
+  <li><b>Chosen at gate closure.</b> Among the mixes that are best for some price state, take the one with the highest expected value over the price states once the energy action must fit beside it (<code>_choose_reserves</code>). With reserve price states, the mix is valued at its expectation over the reserve state.</li>
+  <li><b>Offered at 0 SGD/MW/h.</b> Always clears, paid the clearing price. The quantity can't react to the interval's actual reserve price (open loop in the reserve price).</li>
+  <li><b>Energy curve restricted</b> to actions compatible with the chosen reserves (RC383 power groups, RC386 SoC checks).</li>
+  <li><b>Regulation energy</b> (AGC, 5% up / 5% down of the MW) is settled at USEP and moves the SoC.</li>
+</ul>
+<div class="warn"><p><b>Important TODO: priced reserve offers.</b> A rising curve per product, priced at its opportunity cost: energy margin given up + value of the SoC headroom held (water value over the RC386 band) + expected activation cost. It would be built like the energy curve, by sweeping the reserve price. First check how the NEMS co-optimisation treats a storage unit's energy and reserve curves together.</p></div>
+
+<h2 id="shapes">§6 What the curves look like</h2>
+<p>Raw curves (before compression), energy only, ρ = 0.8, for real forecast issues of the backtest year. “price→MW” is the cumulative MW offered up to that price.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Interval</th><th>SoC</th><th>Model</th><th>Discharge</th><th>Charge</th></tr></thead>
+  <tbody class="num">
+    <tr><td>10 Mar 2026 10:00</td><td>50</td><td>11 bins</td><td>171→77, 173→92</td><td>111→100</td></tr>
+    <tr><td>2 Jun 2026 19:00</td><td>50</td><td>11 bins</td><td>306→92</td><td>195→9, 191→26, 191→100</td></tr>
+    <tr><td>15 Sep 2026 17:00</td><td>50</td><td>11 bins</td><td>1445→92</td><td>1127→9, 895→26, 852→100</td></tr>
+    <tr><td>15 Sep 2026 17:00</td><td>50</td><td>21 nodes</td><td>2839→77, 2888→92</td><td>1443→9, 1086→26, 1078→100</td></tr>
+    <tr><td>15 Sep 2026 17:00</td><td>85</td><td>11 bins</td><td>1237→57, 1445→100</td><td>852→33</td></tr>
+  </tbody>
+</table>
+</div>
+<ul>
+  <li><b>Almost all-or-nothing.</b> 1–3 steps, most MW at one price: over one interval's reach (±46 MWh) the value of stored energy barely changes, so the best response jumps from 0 to the full amount. Compression to 5 steps rarely binds.</li>
+  <li><b>Spiky periods make it hoard.</b> In September, a persistent top state (~1,185 SGD) values stored energy so highly that it buys at almost any price and sells only above ~1,450. That matches the water value sitting at SoC ≥ 80 MWh 57% of the time.</li>
+  <li><b>The continuous state hoards more</b> because its top node (score 3, the top 0.25%) depends on the forecast's extrapolated tail. See the forecasting page, F2.</li>
+</ul>
+
+<h2 id="results">§7 Results (12 months, half-hourly re-bidding)</h2>
+<div class="tablewrap" style="max-width:680px">
+<table style="min-width:580px">
+  <thead><tr><th>Strategy</th><th>Energy only</th><th>Energy + reserves</th></tr></thead>
+  <tbody class="num">
+    <tr><td>Perfect foresight</td><td>16.65 M</td><td>42.66 M</td></tr>
+    <tr><td>Water value, reserve price states</td><td>–</td><td><b>34.53 M</b></td></tr>
+    <tr><td>Water value, mean / median reserve prices</td><td>–</td><td>34.49 / 34.22 M</td></tr>
+    <tr><td>Water value (Markov prices)</td><td><b>9.42 M</b></td><td>–</td></tr>
+    <tr><td>Self-schedule (MILP plan at floor/cap)</td><td>5.99 M</td><td>33.42 M</td></tr>
+  </tbody>
+</table>
+</div>
+<p>NEMS rules with SoC cuts, compliant offers, SoC range 0–100 MWh (the hackathon uses 5–95%), awards up to 100 MW per product (overstated: regulation requirement is 108 MW).</p>
+
+<h2 id="gaps">§8 Gaps and next steps</h2>
+<ol class="steps">
+  <li><b>Hackathon parameters:</b> SoC 5–95 MWh; score is net market revenue, so test κ = 0 in the objective.</li>
+  <li><b>Priced reserve offers</b> (§5).</li>
+  <li><b>Curves against the SoC distribution:</b> choose the curve for t that maximises expected value over the SoC distribution at t (the SDP already gives it), instead of building it at the expected SoC.</li>
+  <li><b>Curves for every later period:</b> standing offers and fallbacks if EMA calls the algorithm less often; refine them by rolling the SoC distribution forward with the chosen curves until they stop changing. If offers really are fixed once a day, optimise all curves jointly over trajectories (an LP; Fleten &amp; Kristoffersen).</li>
+  <li><b>Two pending intervals:</b> optimise the curves for t and t + 1 jointly.</li>
+  <li><b>Offer fields:</b> maximum combined transfer limit and ramp rates (5.2B.2.5–6).</li>
+  <li><b>Price impact:</b> realistic reserve caps or a residual supply curve; with impact, the offer curve chooses the clearing price (supply function theory).</li>
+  <li><b>Smarter compression</b> if curves ever have more than 5 steps: choose the steps that lose the least expected value under the price distribution.</li>
+</ol>
+
+<h2 id="refs">§9 References</h2>
+<ol class="refs">
+  <li>EMC, Singapore Electricity Market Rules, Chapter 6 Market Operation, version of 1 Oct 2025 (sections 5.1, 5.2B, 5.8, 10.4).</li>
+  <li>EMC, Rule Change Papers RC383 (storage offers, reserve limits per class) and RC386 (SoC in the market clearing engine).</li>
+  <li>EMA, BESS Bidding Algorithm Hackathon, Call for Participation, 3 Nov 2026.</li>
+  <li>Fleten &amp; Kristoffersen, “Stochastic programming for optimizing bidding strategies of a Nordic hydropower producer”, <i>EJOR</i>, 2007.</li>
+  <li>Klemperer &amp; Meyer, “Supply function equilibria in oligopoly under uncertainty”, <i>Econometrica</i>, 1989.</li>
+  <li>Zheng, Jaworski &amp; Xu, “Arbitraging variable efficiency energy storage using analytical stochastic dynamic programming”, <i>IEEE Trans. Power Systems</i>, 2022; Xu, SoC-segment bidding (CAISO presentation).</li>
+</ol>
+</main>
+</div>

@@ -1,0 +1,23 @@
+<section id="rules" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:44px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:72px;font-weight:700;line-height:1.1">Change 2: NEMS storage rules since 12 Aug 2025</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:28px">
+<div style="display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:36px;border:1px solid #DCDFE4;border-radius:16px">
+<p style="font-size:24px;color:#2F6690;letter-spacing:2px;text-transform:uppercase">RC383 · power</p>
+<p style="font-size:28px;line-height:1.45;color:#3D4A5C">Limited <b>per reserve class</b>: energy + primary + regulation ≤ P, and energy + contingency + regulation ≤ P. Charging counts negative.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:36px;border:1px solid #DCDFE4;border-radius:16px">
+<p style="font-size:24px;color:#2F6690;letter-spacing:2px;text-transform:uppercase">RC386 · SoC</p>
+<p style="font-size:28px;line-height:1.45;color:#3D4A5C">The engine gets the real SoC 10 min ahead and <b>cuts the schedule</b> to what it can sustain: energy ½ h, regulation ½ h both ways, primary ⅙ h, contingency ⅓–½ h.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:36px;border:1px solid #DCDFE4;border-radius:16px">
+<p style="font-size:24px;color:#2F6690;letter-spacing:2px;text-transform:uppercase">Settlement</p>
+<p style="font-size:28px;line-height:1.45;color:#3D4A5C">Reserves paid for availability. Energy moved by regulation (AGC) or activations is ordinary energy at USEP. No pay if not delivered.</p>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px;background:#14213D;padding:36px 44px;border-radius:12px">
+<h3 style="font-size:36px;font-weight:600;color:#F7F6F2">What changed in the simulator</h3>
+<p style="font-size:28px;line-height:1.45;color:#BFC8D6">Rules live in market.yaml (old pooled rules kept for comparison). The engine step keeps the highest-surplus tranches when the SoC binds. Regulation now moves energy: 5% up / 5% down of the MW held (assumption).</p>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">Sources: EMC rule changes RC383, RC386; Market Rules ch. 6, ch. 7, App. 6D</p>
+<aside>A contingency event is not a windfall: availability is what pays; activation energy is roughly break-even. 2025: 73 forced outages, 29 interruptible-load activations (0.2% of periods).</aside>
+</section>

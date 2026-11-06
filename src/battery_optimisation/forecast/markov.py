@@ -30,8 +30,9 @@ SUB_POINTS = 16  # quantile points averaged per state (bin mean)
 @dataclass(frozen=True)
 class PriceLattice:
     prices: np.ndarray  # [T, J] mean price of each state, increasing in j
-    weights: np.ndarray  # [J] state probabilities (equal)
+    weights: np.ndarray  # [J] state probabilities (equal for bins)
     transitions: np.ndarray  # [J, J] P(state k at t + 1 | state j at t), rows sum to 1
+    scores: np.ndarray | None = None  # [J] normal-score nodes (``node_lattice``)
 
 
 def price_lattice(
@@ -53,6 +54,70 @@ def price_lattice(
         weights=np.full(states, 1.0 / states),
         transitions=transitions / transitions.sum(axis=1, keepdims=True),
     )
+
+
+FINE_POINTS = 4096  # equal-probability score points for the node prices (local means)
+
+
+def hat_weights(nodes: np.ndarray, z: np.ndarray) -> np.ndarray:
+    """Linear-interpolation weights [len(z), J] of each z on the increasing ``nodes`` (clamped
+    beyond the ends): B_l(z), non-negative, summing to 1."""
+    z = np.clip(np.asarray(z, float), nodes[0], nodes[-1])
+    j = np.clip(np.searchsorted(nodes, z, side="right") - 1, 0, nodes.size - 2)
+    f = (z - nodes[j]) / (nodes[j + 1] - nodes[j])
+    out = np.zeros((z.size, nodes.size))
+    rows = np.arange(z.size)
+    out[rows, j] = 1.0 - f
+    out[rows, j + 1] += f
+    return out
+
+
+def hat_expectations(nodes: np.ndarray, means: np.ndarray, sd: float) -> np.ndarray:
+    """E[B_l(Z)] [M, J] for Z ~ N(means[m], sd^2), exact. Each hat is a combination of ramps
+    (z - z_l)^+, whose expectation G(x) = E[(Z - x)^+] = (m - x) Phi((m - x)/sd) + sd phi(.).
+    R_k = E[ramp rising from 0 to 1 over segment k] = (G(z_k) - G(z_k+1)) / h_k; then
+    B_0 = 1 - R_0, B_l = R_l-1 - R_l, B_last = R_last-1 (clamped ends; rows sum to 1)."""
+    nodes = np.asarray(nodes, float)
+    gap = np.asarray(means, float)[:, None] - nodes[None, :]  # m - x
+    if sd <= 0:
+        g = np.maximum(gap, 0.0)
+    else:
+        a = gap / sd
+        g = gap * ndtr(a) + sd * np.exp(-(a**2) / 2) / np.sqrt(2 * np.pi)
+    ramps = (g[:, :-1] - g[:, 1:]) / np.diff(nodes)[None, :]  # [M, J - 1]
+    out = np.empty_like(g)
+    out[:, 0] = 1.0 - ramps[:, 0]
+    out[:, 1:-1] = ramps[:, :-1] - ramps[:, 1:]
+    out[:, -1] = ramps[:, -1]
+    return np.clip(out, 0.0, None) / np.clip(out, 0.0, None).sum(axis=1, keepdims=True)
+
+
+def node_lattice(
+    levels: np.ndarray, quantiles: np.ndarray, nodes: int, z_max: float, rho: float
+) -> PriceLattice:
+    """Continuous price state (fitted value iteration, linear interpolation in the score).
+
+    The state is the normal score z of the price, z_t = Phi^-1(F_t(price_t)); values live at
+    ``nodes`` equally spaced scores on [-z_max, z_max] and are interpolated linearly between
+    them (hat functions B_l). Then E[V(Z') | z_j] = sum_l T[j, l] V(z_l) with
+    T[j, l] = E[B_l(Z') | z_j]: a stochastic matrix, so the lattice SDP runs unchanged.
+    - transitions: AR(1) Z' ~ N(rho z_j, sd^2), exact hat expectations (``hat_expectations``);
+      sd^2 = 1 - rho^2 - rho^2 h^2/6 offsets the variance the interpolation adds (h^2/6 per
+      step, h = node spacing), so the projected N(0, 1) stays the stationary distribution;
+    - weights: N(0, 1) projected on the nodes;
+    - prices: local mean under each hat, E[price B_l(Z)] / E[B_l(Z)], so the stage mean is
+      the forecast's (revenue is linear in price).
+    Other dependence models only change ``transitions`` (e.g. kernel regression on paths)."""
+    scores = np.linspace(-z_max, z_max, nodes)
+    h = scores[1] - scores[0]
+    sd = float(np.sqrt(max(1.0 - rho**2 - rho**2 * h**2 / 6.0, 0.0)))
+    transitions = hat_expectations(scores, rho * scores, sd)
+    weights = hat_expectations(scores, np.zeros(1), 1.0)[0]
+    u = (np.arange(FINE_POINTS) + 0.5) / FINE_POINTS
+    hats = hat_weights(scores, ndtri(u))  # [FINE, J]
+    quantiles = np.sort(np.asarray(quantiles, float), axis=1)
+    prices = np.stack([inverse_cdf(levels, q, u) for q in quantiles]) @ hats / hats.sum(axis=0)
+    return PriceLattice(prices=prices, weights=weights, transitions=transitions, scores=scores)
 
 
 HERMITE_POINTS = 16  # quadrature over each product's own (idiosyncratic) part

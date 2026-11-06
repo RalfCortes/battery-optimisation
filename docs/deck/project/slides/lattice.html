@@ -1,0 +1,23 @@
+<section id="lattice" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:64px;font-weight:700;line-height:1.1">From quantiles to Markov price states</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:28px">
+<div style="display:flex;flex-direction:column;gap:14px;background:#FFFFFF;padding:36px;border:1px solid #DCDFE4;border-radius:16px">
+<p style="font-size:24px;color:#2F6690;letter-spacing:2px;text-transform:uppercase">1 · States</p>
+<p style="font-size:26px;line-height:1.45;color:#3D4A5C">Split each half-hour’s distribution into 11 equal-probability bins (normal-score space). State price = bin mean, from 16 sub-points of the inverse CDF; tails extrapolated.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:14px;background:#FFFFFF;padding:36px;border:1px solid #DCDFE4;border-radius:16px">
+<p style="font-size:24px;color:#2F6690;letter-spacing:2px;text-transform:uppercase">2 · Transitions</p>
+<p style="font-size:26px;line-height:1.45;color:#3D4A5C">AR(1) in normal-score space, Tauchen: z’ = ρ z + √(1−ρ²) ε. P(j | k) = Φ((e_j+1 − ρ n_k)/σ) − Φ((e_j − ρ n_k)/σ).</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:14px;background:#FFFFFF;padding:36px;border:1px solid #DCDFE4;border-radius:16px">
+<p style="font-size:24px;color:#2F6690;letter-spacing:2px;text-transform:uppercase">3 · Persistence ρ</p>
+<p style="font-size:26px;line-height:1.45;color:#3D4A5C">Lag-1 correlation of past forecast errors (Gaussian copula on PIT values), refitted each month on earlier issues: about 0.74–0.78.</p>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px;background:#14213D;padding:36px 44px;border-radius:12px">
+<h3 style="font-size:34px;font-weight:600;color:#F7F6F2">Why it matters</h3>
+<p style="font-size:28px;line-height:1.45;color:#BFC8D6">Independent stages let the optimiser plan to sell a spike and buy a dip an hour later, though real prices move together. Persistence removes those fake spreads; the expected value now sits below perfect foresight, as it must.</p>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">forecast/markov.py · bidding/stages.py (LatticeStages) · 7 to 21 states and fixed ρ all within ±0.1 M SGD</p>
+<aside>e_j are the bin edges in normal-score space, n_k the conditional mean of bin k. Rows are normalised. Equal-probability bins keep every state equally likely at each stage.</aside>
+</section>

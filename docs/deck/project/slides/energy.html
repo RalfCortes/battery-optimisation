@@ -1,0 +1,26 @@
+<section id="energy" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:64px;font-weight:700;line-height:1.1">Results: energy only</h2>
+<div style="display:flex;gap:28px">
+<div style="flex:1;display:flex;flex-direction:column;gap:8px;background:#FFFFFF;padding:32px;border:1px solid #DCDFE4;border-radius:16px">
+<p style="font-family:'Space Grotesk', Arial, sans-serif;font-size:80px;font-weight:700;color:#2F6690">9.42 M</p>
+<p style="font-size:26px;color:#3D4A5C">Water value, SGD per year</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:8px;background:#FFFFFF;padding:32px;border:1px solid #DCDFE4;border-radius:16px">
+<p style="font-family:'Space Grotesk', Arial, sans-serif;font-size:80px;font-weight:700;color:#2F6690">+57%</p>
+<p style="font-size:26px;color:#3D4A5C">vs self-schedule (5.99 M)</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:8px;background:#FFFFFF;padding:32px;border:1px solid #DCDFE4;border-radius:16px">
+<p style="font-family:'Space Grotesk', Arial, sans-serif;font-size:80px;font-weight:700;color:#2F6690">56.5%</p>
+<p style="font-size:26px;color:#3D4A5C">of perfect foresight (16.65 M)</p>
+</div>
+</div>
+<table style="font-size:28px;color:#14213D;width:1664px">
+<tr><th style="width:64%;text-align:left">Water value, energy only, 12 months half-hourly</th><th style="width:18%;text-align:right">Profit</th><th style="width:18%;text-align:right">Cycles / day</th></tr>
+<tr><td>Independent price stages (start of the week)</td><td style="text-align:right">6.74 M</td><td style="text-align:right">–</td></tr>
+<tr style="background:#EEF1F5"><td>+ Markov price states, worst-case offer caps</td><td style="text-align:right">8.69 M</td><td style="text-align:right">–</td></tr>
+<tr><td>+ NEMS rules: the engine handles SoC (market caps)</td><td style="text-align:right">9.40 M</td><td style="text-align:right">1.20</td></tr>
+<tr style="background:#EEF1F5"><td><b>+ offer format compliance (5 + 5 tranches, rounding, rising curve)</b></td><td style="text-align:right"><b>9.42 M</b></td><td style="text-align:right">1.18</td></tr>
+</table>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">Perfect foresight 2.22 cycles/day, self-schedule 1.29. Compliance cost nothing measurable.</p>
+<aside>Each line adds one change on top of the previous; differences under ~0.3 M are within run-to-run noise.</aside>
+</section>

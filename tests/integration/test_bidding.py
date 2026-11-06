@@ -410,6 +410,27 @@ def markov_bidding(rho: float | None = 0.8):
     return bidding.model_copy(update={"price_model": PriceModel.MARKOV, "markov": markov})
 
 
+def continuous_bidding(rho: float | None = 0.8):
+    from battery_optimisation.config import PriceModel
+
+    return markov_bidding(rho).model_copy(update={"price_model": PriceModel.CONTINUOUS})
+
+
+def test_continuous_water_value_never_breaches_limits(battery_cfg, market_cfg) -> None:
+    """Continuous price state (score nodes, hat transitions) through the same SDP and offers."""
+    from battery_optimisation.bidding.stages import stage_source
+
+    prices = make_prices(daily_shape(DAYS, seed=4))
+    qf = quantiles_for(prices, 80.0, market_cfg.gate_closure_intervals)
+    bidding = continuous_bidding()
+    stages = stage_source(pl.DataFrame(), qf, bidding)
+    strategy = WaterValueStrategy(stages, battery_cfg, market_cfg, bidding)
+    dispatch = run(strategy, prices, battery_cfg, market_cfg)
+    assert dispatch.profit_sgd > 0
+    issue = next(iter(strategy.value_functions))
+    assert strategy.stage_prices(issue).shape == (48, bidding.continuous.nodes)
+
+
 def test_markov_water_value_never_breaches_limits(battery_cfg, market_cfg) -> None:
     from battery_optimisation.bidding.stages import LatticeStages
 
@@ -425,13 +446,16 @@ def test_markov_water_value_never_breaches_limits(battery_cfg, market_cfg) -> No
     assert strategy.stage_prices(issue).shape == (48, bidding.markov.states)
 
 
-def test_markov_with_exact_quantiles_approaches_the_benchmark(battery_cfg, market_cfg) -> None:
-    from battery_optimisation.bidding.stages import LatticeStages
+@pytest.mark.parametrize("continuous", [False, True])
+def test_markov_with_exact_quantiles_approaches_the_benchmark(
+    battery_cfg, market_cfg, continuous
+) -> None:
+    from battery_optimisation.bidding.stages import stage_source
 
     prices = make_prices(daily_shape(DAYS, seed=6))
     qf = quantiles_for(prices, 1e-3, market_cfg.gate_closure_intervals)
-    bidding = markov_bidding()
-    stages = LatticeStages(qf, bidding.markov.states, lambda _: 0.8)
+    bidding = continuous_bidding() if continuous else markov_bidding()
+    stages = stage_source(pl.DataFrame(), qf, bidding)
     bid = run(
         WaterValueStrategy(stages, battery_cfg, market_cfg, bidding),
         prices,
@@ -447,8 +471,9 @@ def test_markov_with_exact_quantiles_approaches_the_benchmark(battery_cfg, marke
     assert bid.profit_sgd == pytest.approx(pf.profit_sgd, rel=0.05)
 
 
+@pytest.mark.parametrize("continuous", [False, True])
 @pytest.mark.parametrize("rho", [0.8, None])
-def test_bidding_report_with_markov_prices(battery_cfg, market_cfg, rho) -> None:
+def test_bidding_report_with_markov_prices(battery_cfg, market_cfg, rho, continuous) -> None:
     """``evaluate_bidding`` builds the lattice from the quantiles; rho from the config, else
     from the walk-forward copula of each month."""
     from datetime import date
@@ -465,11 +490,12 @@ def test_bidding_report_with_markov_prices(battery_cfg, market_cfg, rho) -> None
         prices,
         battery_cfg,
         market_cfg,
-        markov_bidding(rho),
+        continuous_bidding(rho) if continuous else markov_bidding(rho),
         copula_lag1={date(2026, 1, 1): 0.7},
     )
     assert ev.report.sdp_days == DAYS
-    assert ev.water_value.stage_prices(next(iter(ev.water_value.value_functions))).shape[1] == 11
+    states = ev.water_value.stage_prices(next(iter(ev.water_value.value_functions))).shape[1]
+    assert states == (21 if continuous else 11)
 
 
 def test_markov_water_value_with_ancillary_services(battery_cfg, market_cfg) -> None:

@@ -11,9 +11,14 @@ terminal_penalty_sgd_per_mwh: 10000    # per MWh below soc_init at the end of th
 #                (forecast/markov.py); offer curves = the optimal response to each price
 # 12 months (daily issues): independent 6.98 M, markov 7.77 M (copula rho) SGD
 price_model: markov
+#   continuous   continuous score state: values at score nodes, linear in between, exact hat
+#                transitions of the AR(1) (forecast/markov.py node_lattice); rho as markov.rho
 markov:
   states: 11       # equal-probability price states per stage
   rho: null        # lag-1 correlation; null: walk-forward copula of each month (~0.77)
+continuous:
+  nodes: 21        # normal-score nodes on [-z_max, z_max]
+  z_max: 3.0
 
 # Offer only tranches that could clear: discharge priced <= the highest scenario price of the
 # interval (+ margin), charge priced >= the lowest (- margin). Unoffered capacity is not counted

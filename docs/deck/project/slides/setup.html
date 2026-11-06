@@ -1,0 +1,20 @@
+<section id="setup" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:72px;font-weight:700;line-height:1.1">The problem and how we score it</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:32px">
+<div style="display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DCDFE4;border-radius:16px">
+<h3 style="font-size:36px;font-weight:600;color:#2F6690">The asset</h3>
+<p style="font-size:28px;line-height:1.45;color:#3D4A5C">100 MW / 100 MWh battery, 85% round-trip efficiency, 5 SGD/MWh degradation cost</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DCDFE4;border-radius:16px">
+<h3 style="font-size:36px;font-weight:600;color:#2F6690">The market</h3>
+<p style="font-size:28px;line-height:1.45;color:#3D4A5C">NEMS real-time pool, 30-minute ex-ante prices, offers fixed 65 min ahead. Energy, regulation, primary and contingency reserve</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DCDFE4;border-radius:16px">
+<h3 style="font-size:36px;font-weight:600;color:#2F6690">The score</h3>
+<p style="font-size:28px;line-height:1.45;color:#3D4A5C">Profit in a clearing simulator on held-out data, as a share of perfect foresight; uplift vs a self-schedule baseline</p>
+</div>
+</div>
+<p style="font-size:32px;line-height:1.45;color:#3D4A5C">Test year: 28 Oct 2025 – 27 Oct 2026, forecasts re-issued every half-hour (rolling 48 steps). Earlier years checked with daily forecasts.</p>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">Baselines: perfect foresight (MILP, same rules) · self-schedule (MILP plan on the median forecast, offered as price-taker)</p>
+<aside>The self-schedule always clears, so it is a price taker: a fair “no bidding skill” baseline, not a realistic strategy.</aside>
+</section>

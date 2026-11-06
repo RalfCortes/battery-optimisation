@@ -1,0 +1,22 @@
+<section id="caveats" data-transition="fade" style="background:#14213D;color:#F7F6F2;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:48px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:72px;font-weight:700;line-height:1.1;color:#F7F6F2">Caveats before trusting the totals</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:32px">
+<div style="display:flex;flex-direction:column;gap:16px;background:#1F2F52;padding:40px;border-radius:16px;border-left:8px solid #E8A04A">
+<h3 style="font-size:36px;font-weight:600;color:#E8A04A">Reserve markets are small</h3>
+<p style="font-size:28px;line-height:1.45;color:#D5DCE6">Requirements: regulation 108 MW, primary ~175 MW, contingency ~411 MW. We allow 100 MW awards per product as a price taker. Total 2025 spend was 70 M SGD, and the backtest books ~30 M of it.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;background:#1F2F52;padding:40px;border-radius:16px;border-left:8px solid #E8A04A">
+<h3 style="font-size:36px;font-weight:600;color:#E8A04A">Regulation energy is assumed</h3>
+<p style="font-size:28px;line-height:1.45;color:#D5DCE6">5% up and 5% down of the regulation MW per interval; no public AGC data. In market.yaml, to model later.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;background:#1F2F52;padding:40px;border-radius:16px;border-left:8px solid #6FA8DC">
+<h3 style="font-size:36px;font-weight:600;color:#9CC3E8">Not modelled yet</h3>
+<p style="font-size:28px;line-height:1.45;color:#D5DCE6">Regulation charges and reserve cost share paid by the battery; reserve activation energy (rare, roughly break-even).</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;background:#1F2F52;padding:40px;border-radius:16px;border-left:8px solid #6FA8DC">
+<h3 style="font-size:36px;font-weight:600;color:#9CC3E8">Noise</h3>
+<p style="font-size:28px;line-height:1.45;color:#D5DCE6">Yearly profit moves a few percent between runs on near-identical forecasts: differences under ~0.3 M are noise.</p>
+</div>
+</div>
+<aside>The reserve caps are the biggest open decision: they change absolute profits a lot and possibly which strategy wins.</aside>
+</section>

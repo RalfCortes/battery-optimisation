@@ -1,0 +1,24 @@
+<section id="resmath" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:36px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:64px;font-weight:700;line-height:1.1">Change 3: reserves chosen inside the SDP</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:40px">
+<div style="display:flex;flex-direction:column;gap:20px">
+<h3 style="font-size:34px;font-weight:600;color:#2F6690">R_t(s→s’): a small LP per move</h3>
+<p style="font-size:26px;line-height:1.45;color:#3D4A5C">Maximise Σ value_p · x_p over x = (regulation, primary, contingency) subject to the NEMS rules at SoC s with the move’s charge c and discharge d:</p>
+<ul style="font-size:26px;line-height:1.45;color:#3D4A5C">
+<li>d − c + reg + pri ≤ 100 and d − c + reg + con ≤ 100</li>
+<li>(d/2 + reg/2 + pri/6 + con/3)/η − c·η/2 ≤ s − min, plus the 10-min and 30-min checks</li>
+<li>(c/2 + reg/2)·η − d/(2η) ≤ max − s</li>
+</ul>
+</div>
+<div style="display:flex;flex-direction:column;gap:20px">
+<h3 style="font-size:34px;font-weight:600;color:#B35C10">Solved without an LP solver</h3>
+<p style="font-size:26px;line-height:1.45;color:#3D4A5C">The constraint matrix never changes; only the right-hand side does. Corners = every triple of active constraints, kept where all hold: computed once per SoC grid and cached (about 10 corners per move).</p>
+<p style="font-size:26px;line-height:1.45;color:#3D4A5C">Per issue: one matrix product of corners × stage values, max over corners: 13 ms for 48 stages × 10,201 moves.</p>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:10px;background:#14213D;padding:32px 44px;border-radius:12px">
+<p style="font-size:28px;line-height:1.45;color:#F7F6F2"><b>Value per MW held</b> = forecast availability price × ½ h; regulation also counts its wear and the energy AGC moves (settled at the stage’s mean price, SoC loss valued the same).</p>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">optim/reserves.py · tested against random feasible mixes and the market engine’s own LP</p>
+<aside>Firm reserves (default): no credit from the opposite energy flow, so reserves stay valid whichever way the energy offer clears.</aside>
+</section>

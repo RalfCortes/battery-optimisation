@@ -1,0 +1,23 @@
+<section id="markov" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:48px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:72px;font-weight:700;line-height:1.1">Change 1: prices that persist</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:48px">
+<div style="display:flex;flex-direction:column;gap:20px;background:#FFFFFF;padding:44px;border:1px solid #DCDFE4;border-radius:16px">
+<p style="font-size:24px;color:#B35C10;letter-spacing:2px;text-transform:uppercase">Before</p>
+<h3 style="font-size:40px;font-weight:600">Each half-hour drawn independently</h3>
+<p style="font-size:28px;line-height:1.45;color:#3D4A5C">The optimiser saw spreads that never happen: it expected 25.0 M SGD a year when perfect foresight makes 16.1 M. Re-planning more often made results worse.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:20px;background:#FFFFFF;padding:44px;border:1px solid #DCDFE4;border-radius:16px">
+<p style="font-size:24px;color:#2F6690;letter-spacing:2px;text-transform:uppercase">After</p>
+<h3 style="font-size:40px;font-weight:600">11 Markov price states</h3>
+<p style="font-size:28px;line-height:1.45;color:#3D4A5C">States from the forecast quantiles; a high price makes a high price more likely next. Persistence fitted each month on earlier data only.</p>
+</div>
+</div>
+<table style="font-size:28px;color:#14213D;width:1664px">
+<tr><th style="width:52%;text-align:left">Energy only, water value</th><th style="width:16%;text-align:right">Before</th><th style="width:16%;text-align:right">After</th><th style="width:16%;text-align:right">Self-schedule</th></tr>
+<tr><td>Half-hourly forecasts, 2025–26</td><td style="text-align:right">6.74 M</td><td style="text-align:right">8.69 M</td><td style="text-align:right">5.99 M</td></tr>
+<tr style="background:#EEF1F5"><td>Daily, Jul 2022 – Jun 2023</td><td style="text-align:right">8.14 M</td><td style="text-align:right">13.41 M</td><td style="text-align:right">11.66 M</td></tr>
+<tr><td>Daily, Oct 2023 – Oct 2024</td><td style="text-align:right">5.35 M</td><td style="text-align:right">8.61 M</td><td style="text-align:right">5.69 M</td></tr>
+</table>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">Pooled reserve rules, worst-case offer caps (before today’s changes). SGD per year.</p>
+<aside>The old water value lost to the self-schedule in both earlier years; the Markov version wins in all three. Robust to 7–21 states and the persistence setting (±0.1 M).</aside>
+</section>

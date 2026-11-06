@@ -1,0 +1,28 @@
+<section id="gate" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:44px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:64px;font-weight:700;line-height:1.1">Timing: what is known when we bid</h2>
+<div style="position:relative;height:300px">
+<div style="position:absolute;left:0;top:132px;width:1664px;height:6px;background:#B8C1CE"></div>
+<div style="position:absolute;left:0;top:96px;width:400px;height:78px;background:#DCE6F0;border-radius:8px"></div>
+<p style="position:absolute;left:16px;top:112px;width:380px;font-size:26px;color:#14213D">interval t − 3</p>
+<div style="position:absolute;left:416px;top:96px;width:400px;height:78px;background:#DCE6F0;border-radius:8px"></div>
+<p style="position:absolute;left:432px;top:112px;width:380px;font-size:26px;color:#14213D">t − 2 (pending)</p>
+<div style="position:absolute;left:832px;top:96px;width:400px;height:78px;background:#DCE6F0;border-radius:8px"></div>
+<p style="position:absolute;left:848px;top:112px;width:380px;font-size:26px;color:#14213D">t − 1 (pending)</p>
+<div style="position:absolute;left:1248px;top:96px;width:416px;height:78px;background:#E07A1F;border-radius:8px"></div>
+<p style="position:absolute;left:1264px;top:112px;width:390px;font-size:26px;color:#14213D;font-weight:600">interval t (offered)</p>
+<x-shape kind="arrow-down" style="position:absolute;left:390px;top:20px;width:40px;height:64px;background:#14213D"></x-shape>
+<p style="position:absolute;left:250px;top:200px;width:340px;font-size:26px;color:#14213D;text-align:center">Gate closure: offer for t fixed</p>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:40px">
+<div style="display:flex;flex-direction:column;gap:14px;background:#FFFFFF;padding:36px;border:1px solid #DCDFE4;border-radius:16px">
+<h3 style="font-size:32px;font-weight:600;color:#2F6690">Known at the decision</h3>
+<p style="font-size:26px;line-height:1.45;color:#3D4A5C">Realised prices before it, SoC at its start, our own pending offers for t − 2 and t − 1, the forecast issued at that moment.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:14px;background:#FFFFFF;padding:36px;border:1px solid #DCDFE4;border-radius:16px">
+<h3 style="font-size:32px;font-weight:600;color:#B35C10">Unknown</h3>
+<p style="font-size:26px;line-height:1.45;color:#3D4A5C">How t − 2 and t − 1 will clear, so the SoC at t is uncertain: the offer uses the expected SoC; the engine checks the real one.</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">sim/simulator.py · MarketView.decided_at: no strategy can see anything published after its decision</p>
+<aside>NEMS rule is 65 minutes; we decide at the start of t − 2 (60 minutes). Everything we use is already known 5 minutes earlier except a little regulation drift.</aside>
+</section>

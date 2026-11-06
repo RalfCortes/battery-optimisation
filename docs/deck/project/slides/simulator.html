@@ -1,0 +1,22 @@
+<section id="simulator" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:36px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:64px;font-weight:700;line-height:1.1">One settlement interval in the simulator</h2>
+<table style="font-size:26px;color:#14213D;width:1664px">
+<tr><th style="width:6%;text-align:left">#</th><th style="width:26%;text-align:left">Step</th><th style="width:68%;text-align:left">Rule</th></tr>
+<tr><td>1</td><td>Validate offer</td><td>Pair counts, price order, limits, decimals; a bad offer stops the run</td></tr>
+<tr style="background:#EEF1F5"><td>2</td><td>Clear energy</td><td>Discharge tranche clears if offer ≤ USEP; charge if bid ≥ USEP (price taker)</td></tr>
+<tr><td>3</td><td>Clear reserves</td><td>Tranche clears if offer ≤ reserve price; award capped at max_award_mw</td></tr>
+<tr style="background:#EEF1F5"><td>4</td><td>Engine SoC cut</td><td>If the schedule breaks a power or SoC rule at the real SoC: LP keeps the highest-surplus tranches</td></tr>
+<tr><td>5</td><td>Battery step</td><td>Efficiencies, SoC bounds; then regulation energy (5% up, 5% down)</td></tr>
+<tr style="background:#EEF1F5"><td>6</td><td>Settle</td><td>USEP × delivered energy + reserve price × MW × ½ h − wear − shortfall penalty</td></tr>
+</table>
+<div style="display:flex;gap:28px">
+<div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#FFFFFF;padding:28px 36px;border:1px solid #DCDFE4;border-radius:12px">
+<p style="font-size:26px;line-height:1.4;color:#3D4A5C"><b>Shortfall penalty</b>: 4,500 SGD/MWh, on by default as a safety net; zero today because the engine never schedules beyond the SoC.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:10px;background:#FFFFFF;padding:28px 36px;border:1px solid #DCDFE4;border-radius:12px">
+<p style="font-size:26px;line-height:1.4;color:#3D4A5C"><b>Every interval is logged</b>: price, flows, SoC, awards, revenue, wear, cut MW, regulation energy.</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">sim/clearing.py · sim/storage_rules.py · sim/simulator.py</p>
+<aside>Surplus = realised price minus offer price per MW (a welfare-maximising engine keeps those first): price-taking energy is kept before reserves.</aside>
+</section>

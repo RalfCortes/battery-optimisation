@@ -344,11 +344,20 @@ class PriceModel(StrEnum):
 
     INDEPENDENT = "independent"  # stagewise marginals of the copula scenarios
     MARKOV = "markov"  # price states from the quantiles, persisting (forecast/markov.py)
+    CONTINUOUS = "continuous"  # continuous score state: nodes + interpolation (node_lattice)
 
 
 class MarkovConfig(_Config):
     states: int = Field(ge=2)  # price states per stage
     rho: float | None = Field(default=None, ge=0, lt=1)  # lag-1 correlation; None: copula's
+
+
+class ContinuousConfig(_Config):
+    """Continuous price state (``forecast.markov.node_lattice``): values at ``nodes`` normal
+    scores on [-z_max, z_max], linear in between; rho as ``markov.rho``."""
+
+    nodes: int = Field(default=21, ge=3)
+    z_max: float = Field(default=3.0, gt=0)
 
 
 class ReservePrices(StrEnum):
@@ -397,6 +406,7 @@ class BiddingConfig(_Config):
     # price-taking charge backs raise reserves beyond P, as in the plan)
     price_model: PriceModel = PriceModel.INDEPENDENT
     markov: MarkovConfig = MarkovConfig(states=11)
+    continuous: ContinuousConfig = ContinuousConfig()
     reserve_planner: ReservePlanner = ReservePlanner.MILP
     stochastic_paths: int = Field(default=20, ge=1)  # price paths of the stochastic reserve plan
     ancillary_price: AncillaryPrice = AncillaryPrice.MEDIAN

@@ -1,0 +1,70 @@
+{
+  "v": 4,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-11-05T12:30:00Z"
+  },
+  "lists": "css",
+  "title": "BESS Bidding Pipeline Recap",
+  "order": [
+    "cover",
+    "setup",
+    "pipeline",
+    "forecast",
+    "fcdetail",
+    "lattice",
+    "markov",
+    "sdp",
+    "rules",
+    "resmath",
+    "resstates",
+    "reserves",
+    "milp",
+    "curve",
+    "gate",
+    "simulator",
+    "compliance",
+    "energy",
+    "ancillary",
+    "behaviour",
+    "caveats",
+    "engineering",
+    "next"
+  ],
+  "sections": {
+    "s1": {
+      "description": "What we are building and how the pipeline fits together",
+      "start": "cover"
+    },
+    "s2": {
+      "description": "Forecasts: Chronos-2 set-up and the Markov price states",
+      "start": "forecast"
+    },
+    "s3": {
+      "description": "Optimisation: the water value SDP, NEMS storage rules, reserves inside the SDP, the MILPs",
+      "start": "sdp"
+    },
+    "s4": {
+      "description": "Bidding and simulation: from value function to offer, timing, one settlement interval, compliance",
+      "start": "curve"
+    },
+    "s5": {
+      "description": "12-month results with half-hourly forecasts",
+      "start": "energy"
+    },
+    "s6": {
+      "description": "Caveats, engineering state and next steps",
+      "start": "caveats"
+    }
+  },
+  "faces": {
+    "space-grotesk": {
+      "family": "Space Grotesk",
+      "href": "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400..700&family=IBM+Plex+Sans:wght@400;600&display=swap"
+    },
+    "ibm-plex-sans": {
+      "family": "IBM Plex Sans",
+      "href": "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&display=swap"
+    }
+  }
+}

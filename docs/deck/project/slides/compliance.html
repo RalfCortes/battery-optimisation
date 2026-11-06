@@ -1,0 +1,16 @@
+<section id="compliance" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:72px;font-weight:700;line-height:1.1">Offers now follow the market rules</h2>
+<table style="font-size:26px;color:#14213D;width:1664px">
+<tr><th style="width:40%;text-align:left">Rule (Market Rules ch. 6)</th><th style="width:46%;text-align:left">Pipeline</th><th style="width:14%;text-align:left">Status</th></tr>
+<tr><td>Storage offer: ≤ 5 charge + ≤ 5 discharge pairs</td><td>n_tranches 5 per side (was 10), enforced</td><td>Fixed</td></tr>
+<tr style="background:#EEF1F5"><td>Pairs in increasing price order</td><td>Curve fitted to rise with price; charge bids kept below discharge offers</td><td>Fixed</td></tr>
+<tr><td>Prices to 2 decimals, MW to 1 decimal</td><td>Rounded; MW rounded down</td><td>Fixed</td></tr>
+<tr style="background:#EEF1F5"><td>Reserve / regulation: ≤ 5 pairs, price ≥ 0</td><td>One pair at price 0 per product</td><td>OK</td></tr>
+<tr><td>Volumes ≤ what can reasonably be delivered</td><td>Capped from the expected SoC</td><td>Fixed</td></tr>
+<tr style="background:#EEF1F5"><td>No changes within 65 min of the period</td><td>Offer for t fixed at the start of t − 2 (60 min)</td><td>Near</td></tr>
+<tr><td>Price limits (Appendix 6J)</td><td>±4,500 SGD/MWh assumed</td><td>Open</td></tr>
+</table>
+<p style="font-size:28px;line-height:1.45;color:#3D4A5C">“Near”: at 65 min we know everything we use at 60 min, except 5 minutes of regulation drift.</p>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">Still to read: the EMA BESS bidding hackathon brief (the challenge’s own rules)</p>
+<aside>Each rule is enforced by the simulator’s market: a non-compliant offer raises an error. Rounding costs perfect foresight about 0.02%. The ordering check caught a real issue: with Markov prices the optimal response can charge at a higher price than it discharges (a high price announces higher prices). The curve is now the closest rising fit (isotonic regression).</aside>
+</section>

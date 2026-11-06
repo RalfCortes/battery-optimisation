@@ -1,0 +1,27 @@
+<section id="resstates" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:36px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:64px;font-weight:700;line-height:1.1">Change 4: reserve prices get their own trajectories</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:40px">
+<div style="display:flex;flex-direction:column;gap:20px">
+<h3 style="font-size:34px;font-weight:600;color:#2F6690">Before: one reserve price per stage</h3>
+<p style="font-size:26px;line-height:1.45;color:#3D4A5C">Energy had 11 Markov price states, but each reserve product had one point forecast per stage, the <b>median</b>. Reserve prices are skewed: realised means sit about 14% above the forecast median for every product.</p>
+<h3 style="font-size:34px;font-weight:600;color:#2F6690">Now: state = (energy k, reserve r)</h3>
+<p style="font-size:26px;line-height:1.45;color:#3D4A5C">One common reserve factor F, AR(1) with ρ = 0.75, in 5 equal-probability bins. Each product: z<sub>p</sub> = λ<sub>p</sub>F + √(1−λ<sub>p</sub>²)·e<sub>p</sub>; state price = E[price<sub>p</sub> | F in bin r]. Revenue is linear, so the conditional mean is exact.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:20px">
+<h3 style="font-size:34px;font-weight:600;color:#B35C10">Fitted on the 2025–26 forecast errors</h3>
+<table style="font-size:24px;color:#14213D;width:760px">
+<tr><th style="text-align:left">Normal-score errors</th><th style="text-align:right">Value</th></tr>
+<tr><td>Lag-1, all four markets</td><td style="text-align:right">0.71–0.77</td></tr>
+<tr style="background:#EEF1F5"><td>reg / pri / con correlations</td><td style="text-align:right">0.28 · 0.49 · 0.35</td></tr>
+<tr><td>Loadings λ reg / pri / con</td><td style="text-align:right">0.63 · 0.45 · 0.78</td></tr>
+<tr style="background:#EEF1F5"><td>With energy (not modelled yet)</td><td style="text-align:right">0.19–0.38</td></tr>
+</table>
+<p style="font-size:26px;line-height:1.45;color:#3D4A5C">55 states instead of 11. With numba (4 CPUs): 223 → 58 ms per issue, ~17 min a year for the water value.</p>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:10px;background:#14213D;padding:32px 44px;border-radius:12px">
+<p style="font-size:28px;line-height:1.45;color:#F7F6F2"><b>Offers unchanged:</b> reserves are still offered at 0, picked at gate closure in expectation over the reserve state; the energy curve’s continuation is averaged over it.</p>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">forecast/markov.py factor_lattice · optim/sdp.py · optim/kernels.py · config: reserve_prices, reserve_markov</p>
+<aside>A single shared state for all three products would assume correlation 1; the measured 0.3–0.5 needs the loadings.</aside>
+</section>

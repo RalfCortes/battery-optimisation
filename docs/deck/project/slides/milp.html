@@ -1,0 +1,26 @@
+<section id="milp" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:40px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:64px;font-weight:700;line-height:1.1">The MILP: benchmarks and planners</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:40px">
+<div style="display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DCDFE4;border-radius:16px">
+<h3 style="font-size:34px;font-weight:600;color:#2F6690">One co-optimised problem</h3>
+<ul style="font-size:26px;line-height:1.45;color:#3D4A5C">
+<li>Charge, discharge, SoC and one binary per half-hour (never both)</li>
+<li>Regulation, primary, contingency per half-hour, same NEMS rules as the simulator</li>
+<li>Expected regulation energy in the SoC balance</li>
+<li>End of window ≥ starting SoC; HiGHS, a year in about 5 s</li>
+</ul>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DCDFE4;border-radius:16px">
+<h3 style="font-size:34px;font-weight:600;color:#B35C10">Where it is used</h3>
+<ul style="font-size:26px;line-height:1.45;color:#3D4A5C">
+<li><b>Perfect foresight</b>: realised prices, the upper bound</li>
+<li><b>Self-schedule</b>: median forecast, re-planned every half-hour, offered price-taking</li>
+<li><b>Reserve planner (old)</b>: average forecast path, reserves handed to the SDP</li>
+<li><b>Stochastic planner</b>: reserves shared by 20 sampled paths, energy per path</li>
+</ul>
+</div>
+</div>
+<p style="font-size:28px;line-height:1.45;color:#3D4A5C">Stochastic MILP: 1.1 s per issue with the binaries, 0.18 s relaxed (same objective in tests); a commercial solver would also help.</p>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">optim/milp.py · solve_schedule, solve_reserve_plan</p>
+<aside>The binaries are the whole cost of the stochastic plan: relaxing them is 6× faster. Only its reserves are used, never its energy schedule.</aside>
+</section>

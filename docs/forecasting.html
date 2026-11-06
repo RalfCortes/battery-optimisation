@@ -1,0 +1,361 @@
+<title>Forecasting for the Water Value</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']], tags: 'none' },
+  svg: { fontCache: 'global' },
+  options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+};
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg-full.min.js" defer></script>
+<style>
+/* Layout: textbook chapter. Sticky contents rail on wide screens, one reading column, equations in their own scroll boxes. */
+:root {
+  --paper: #f4f6f9;
+  --panel: #ffffff;
+  --ink: #131923;
+  --muted: #586273;
+  --rule: #d6dce5;
+  --accent: #1a56c4;
+  --accent-soft: #e4ecfb;
+  --warm: #a24a07;
+  --warm-soft: #fbeee2;
+  --good: #1f7a4d;
+  --good-soft: #e3f3ea;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0d1219; --panel: #141b26; --ink: #e5eaf1; --muted: #97a2b2; --rule: #253043;
+    --accent: #7ea8ff; --accent-soft: #1a2640; --warm: #f2a65e; --warm-soft: #2c2016;
+    --good: #6fd19c; --good-soft: #142a20; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0d1219; --panel: #141b26; --ink: #e5eaf1; --muted: #97a2b2; --rule: #253043;
+  --accent: #7ea8ff; --accent-soft: #1a2640; --warm: #f2a65e; --warm-soft: #2c2016;
+  --good: #6fd19c; --good-soft: #142a20; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink);
+  font-family: var(--body); font-size: 17px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 80px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 48px; }
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-family: var(--display); font-size: 14px; }
+nav.toc p { margin: 0 0 8px; text-transform: uppercase; letter-spacing: .08em; font-size: 12px; color: var(--muted); font-weight: 600; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+nav.toc a { color: var(--ink); text-decoration: none; display: flex; gap: 8px; }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); }
+nav.toc .n { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 2.2em; padding-top: 2px; }
+main { min-width: 0; max-width: 760px; }
+header.top { margin-bottom: 40px; }
+.eyebrow { font-family: var(--display); text-transform: uppercase; letter-spacing: .1em; font-size: 12px; font-weight: 700; color: var(--accent); }
+h1 { font-family: var(--display); font-stretch: 85%; font-weight: 800; font-size: clamp(32px, 5vw, 46px); line-height: 1.05; margin: 8px 0 16px; text-wrap: balance; }
+h2 { font-family: var(--display); font-stretch: 88%; font-weight: 750; font-size: 28px; line-height: 1.15; margin: 64px 0 12px; text-wrap: balance; scroll-margin-top: 24px; }
+h3 { font-family: var(--display); font-weight: 650; font-size: 19px; margin: 28px 0 6px; }
+.lede { font-size: 19px; color: var(--muted); max-width: 62ch; }
+p, li { max-width: 68ch; }
+a { color: var(--accent); }
+code { font-family: var(--mono); font-size: .86em; background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+.eq { overflow-x: auto; overflow-y: hidden; margin: 14px 0; padding: 4px 0; }
+mjx-container[display="true"] { margin: 0 !important; }
+.box { border: 1px solid var(--rule); background: var(--panel); border-radius: 10px; padding: 18px 22px; margin: 20px 0; }
+.box > :first-child { margin-top: 0; }
+.box > :last-child { margin-bottom: 0; }
+.key { border-left: 4px solid var(--accent); background: var(--accent-soft); border-radius: 0 10px 10px 0; padding: 14px 20px; margin: 20px 0; }
+.key > :first-child { margin-top: 0; } .key > :last-child { margin-bottom: 0; }
+.warn { border-left: 4px solid var(--warm); background: var(--warm-soft); border-radius: 0 10px 10px 0; padding: 14px 20px; margin: 20px 0; }
+.warn > :first-child { margin-top: 0; } .warn > :last-child { margin-bottom: 0; }
+.label { font-family: var(--display); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; color: var(--muted); margin: 0 0 4px; }
+.method { border-top: 2px solid var(--ink); margin-top: 56px; padding-top: 4px; }
+.method h2 { margin-top: 10px; display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+.tag { font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--paper); background: var(--ink); padding: 2px 8px; border-radius: 5px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; margin: 14px 0 18px; font-family: var(--display); font-size: 14px; }
+.facts div { background: var(--panel); padding: 10px 12px; min-width: 0; }
+.facts b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 700; margin-bottom: 2px; }
+.verdict { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }
+.verdict > div { border-radius: 8px; padding: 12px 16px; min-width: 0; }
+.verdict .pro { background: var(--good-soft); }
+.verdict .con { background: var(--warm-soft); }
+.verdict ul { margin: 4px 0 0; padding-left: 18px; font-size: 15.5px; }
+.verdict .pro .label { color: var(--good); } .verdict .con .label { color: var(--warm); }
+.steps { counter-reset: s; list-style: none; padding: 0; display: grid; gap: 10px; }
+.steps li { counter-increment: s; position: relative; padding-left: 40px; }
+.steps li::before { content: counter(s); position: absolute; left: 0; top: 2px; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-family: var(--mono); font-size: 13px; font-weight: 600; display: grid; place-items: center; }
+figure { margin: 24px 0; }
+.trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.trio > div { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 12px 10px; min-width: 0; }
+.trio svg { width: 100%; height: auto; display: block; }
+.trio h4 { font-family: var(--display); font-size: 15px; margin: 8px 0 2px; }
+.trio p { font-size: 14.5px; margin: 0; color: var(--muted); line-height: 1.45; }
+figcaption { font-size: 14.5px; color: var(--muted); margin-top: 10px; }
+.tablewrap { overflow-x: auto; margin: 18px 0; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); }
+table { border-collapse: collapse; font-family: var(--display); font-size: 14px; min-width: 820px; width: 100%; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 700; background: var(--paper); }
+tr:last-child td { border-bottom: 0; }
+td.m { font-family: var(--mono); font-weight: 600; white-space: nowrap; }
+.num { font-variant-numeric: tabular-nums; }
+.yes { color: var(--good); font-weight: 650; } .no { color: var(--warm); font-weight: 650; }
+.refs { font-size: 15px; } .refs li { margin-bottom: 6px; }
+.part2head { margin-top: 96px; padding-top: 32px; border-top: 6px double var(--rule); scroll-margin-top: 24px; }
+.method ul { padding-left: 20px; }
+svg .ln { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+svg .lnA { stroke: var(--accent); stroke-width: 2.2; fill: none; }
+svg .nd { fill: var(--panel); stroke: var(--ink); stroke-width: 1.6; }
+svg .ndA { fill: var(--accent); stroke: var(--accent); stroke-width: 1.6; }
+svg .ax { stroke: var(--rule); stroke-width: 1; }
+svg text { fill: var(--muted); font-family: var(--mono); font-size: 11px; }
+@media (max-width: 960px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  nav.toc { position: static; border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; background: var(--panel); }
+  nav.toc ol { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+}
+@media (max-width: 620px) {
+  body { font-size: 16px; }
+  .trio, .verdict { grid-template-columns: minmax(0, 1fr); }
+  h2 { font-size: 24px; }
+}
+</style>
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#need"><span class="n">§1</span>What the optimiser needs</a></li>
+    <li><a href="#today"><span class="n">§2</span>Today's pipeline</a></li>
+    <li><a href="#copula"><span class="n">§3</span>From quantiles to paths</a></li>
+    <li><a href="#consume"><span class="n">§4</span>What the SDP consumes</a></li>
+    <li><a href="#weak"><span class="n">§5</span>Known weaknesses</a></li>
+    <li><a href="#f1"><span class="n">F1</span>Calibration, adaptivity</a></li>
+    <li><a href="#f2"><span class="n">F2</span>Tails and spikes</a></li>
+    <li><a href="#f3"><span class="n">F3</span>Models shaped for the SDP</a></li>
+    <li><a href="#f4"><span class="n">F4</span>Generative paths: diffusion</a></li>
+    <li><a href="#f5"><span class="n">F5</span>Mixtures of experts</a></li>
+    <li><a href="#f6"><span class="n">F6</span>Covariates</a></li>
+    <li><a href="#eval"><span class="n">§6</span>How to judge a forecast</a></li>
+    <li><a href="#road"><span class="n">§7</span>Roadmap</a></li>
+    <li><a href="#refs"><span class="n">§8</span>References</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="top">
+  <div class="eyebrow">Layer 1 · Forecasting</div>
+  <h1>Forecasting for the Water Value</h1>
+  <p class="lede">What the dispatch and bidding layers need from a price forecast, what we run today (Chronos-2 and a Gaussian copula), where it falls short, and the options for improving it: adaptive calibration, models shaped for the SDP, diffusion models, mixtures of experts.</p>
+</header>
+
+<h2 id="need">§1 What the optimiser needs from a forecast</h2>
+<p>The SDP doesn't need a best guess. It needs the conditional law of future prices given what is known at decision time, \(\mathbb P(\lambda_{t+1:T} \mid \mathcal F_t)\), in a form it can use. The dispatch methods page derives why. Each requirement has a reason:</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Requirement</th><th>Why the decision layer needs it</th><th>Where it is used</th></tr></thead>
+  <tbody>
+    <tr><td>Marginal distribution per interval</td><td>Open-loop value depends only on the mean (Fact 1), but the offer curve reacts to every possible price</td><td>State prices of the lattice, offer price grid</td></tr>
+    <tr><td>The <b>mean</b>, not just the median</td><td>Revenue is linear in price; skewed prices make the median understate value (reserves: realised mean ~14% above the forecast median)</td><td>Point forecasts, reserve state prices</td></tr>
+    <tr><td>Dependence between steps</td><td>The value of waiting comes from how much \(\lambda_t\) says about \(\lambda_{t+1}\). Independent steps create fake spreads (25 M expected vs 16 M perfect foresight)</td><td>Markov transitions (\(\rho\))</td></tr>
+    <tr><td>Tails (spikes)</td><td>A few spike intervals carry a large share of the profit; the top state sets how much energy to hold</td><td>Top lattice states / nodes</td></tr>
+    <tr><td>Joint law of the four prices</td><td>Reserves and energy compete for the same MW and SoC</td><td>Reserve factor states</td></tr>
+    <tr><td>Fresh every 30 minutes</td><td>Re-forecasting is where real information enters; the chain inside one issue only models the next hours</td><td>Rolling issues (17,567 per year)</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="key"><p><b>The deciding metric is downstream profit</b>, measured by running forecast → SDP → offers → simulator. CRPS and coverage are diagnostics. A forecast that improves CRPS but not profit isn't kept.</p></div>
+
+<h2 id="today">§2 Today's pipeline</h2>
+<div class="facts">
+  <div><b>Model</b>Chronos-2 (amazon/chronos-2), zero-shot</div>
+  <div><b>Context / horizon</b>28 days (1,344 steps) / 48 steps</div>
+  <div><b>Output</b>21 native quantiles, 0.01 … 0.99</div>
+  <div><b>Cadence</b>At every gate closure, 2 intervals ahead</div>
+</div>
+<ol class="steps">
+  <li><b>Targets.</b> USEP, and the same model for regulation, primary and contingency prices (reserve group A) via <code>forecast ancillary</code>.</li>
+  <li><b>Covariates.</b> Calendar and regime flag (known in the future), system demand (past only: no archived demand forecasts), and weather as of the issue time: ECMWF IFS runs 06Z/18Z, usable 8 h after their start, a 3×3 grid over the island, five variables. Never realised future values (leakage).</li>
+  <li><b>Walk-forward.</b> Each issue sees only data strictly before its issue time. A year of half-hourly issues takes about 16 GPU-minutes.</li>
+  <li><b>Scenarios.</b> A Gaussian copula on past forecast errors turns the marginals into correlated 48-step paths (§3); 500 samples are reduced to 30 scenarios by k-medoids, always keeping the 3 highest-price paths.</li>
+</ol>
+<div class="tablewrap" style="max-width:640px">
+<table style="min-width:540px">
+  <thead><tr><th>USEP, 12 months (Oct 2025 – Oct 2026)</th><th>Value</th></tr></thead>
+  <tbody class="num">
+    <tr><td>CRPS</td><td>43.5 SGD/MWh</td></tr>
+    <tr><td>MAE of the median</td><td>54.6 SGD/MWh (46.2 at 1–1.5 h, 56.9 at 25 h)</td></tr>
+    <tr><td>Coverage of the 10–90% band</td><td>77.0% (target 80%)</td></tr>
+    <tr><td>Spikes (top 5%) inside the band / false alarms</td><td>82% / 15%</td></tr>
+    <tr><td>Copula lag-1 vs realised lag-1 (monthly)</td><td>0.81–0.84 vs 0.82–0.87</td></tr>
+    <tr><td>Reserve price MAE, Chronos-2 vs persistence</td><td>reg 9.6 vs 12.0, pri 9.1 vs 11.1, con 12.8 vs 15.8</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="copula">§3 From quantiles to paths: the Gaussian copula</h2>
+<p>Chronos-2 predicts quantiles directly; it doesn't sample paths. The copula supplies the dependence between steps. For each past issue and step \(h\), the realised price's position in its own forecast gives a uniform score and a normal score:</p>
+<div class="eq">\[ u_{h} = \hat F_{h}(y_{h}) \in (0,1), \qquad z_h = \Phi^{-1}(u_h), \qquad \boldsymbol z = (z_1,\dots,z_{48}) \sim \mathcal N(\boldsymbol 0, \Sigma). \]</div>
+<p>\(\Sigma\) is the correlation of these scores over the 90 days before the month (walk-forward), shrunk towards the identity: \(\Sigma = (1-\delta)\hat\Sigma + \delta I\), \(\delta = 0.02\) (the value whose scenarios match the realised lag-1 correlation best). A path is drawn by sampling \(\boldsymbol z\) and mapping each step back through its own quantile function:</p>
+<div class="eq">\[ \lambda_h = \hat F_h^{-1}\big(\Phi(z_h)\big), \qquad h = 1,\dots,48. \]</div>
+<p>The marginals stay exactly the forecast's; only the ranks are coupled. Between and beyond the 21 quantiles, \(\hat F^{-1}\) is interpolated and extrapolated (tails), which matters for the top states (§5).</p>
+
+<h2 id="consume">§4 What the SDP actually consumes</h2>
+<p>The water-value SDP doesn't use the 30 scenarios. It uses the quantiles and one number of the copula:</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Forecast output</th><th>SDP object</th><th>How</th></tr></thead>
+  <tbody>
+    <tr><td>21 quantiles per step</td><td>State prices \(\lambda_t(k)\)</td><td>11 equal-probability bins (bin means), or 21 score nodes (local means, continuous state)</td></tr>
+    <tr><td>Copula lag-1 \(\rho\) (monthly)</td><td>Transitions \(P(k' \mid k)\)</td><td>AR(1) on normal scores: Tauchen bins or exact hat expectations</td></tr>
+    <tr><td>Reserve quantiles + error correlations</td><td>Reserve states \(\pi^p_t(r)\)</td><td>One common factor, loadings 0.63/0.45/0.78, 5 bins</td></tr>
+    <tr><td>Scenarios</td><td>Price band, expected SoC at gate closure</td><td>Trim offers to the scenario band ± margin</td></tr>
+  </tbody>
+</table>
+</div>
+<p>So the dependence the SDP sees is a first-order Markov chain on normal scores. That's consistent with the copula only if \(\Sigma_{ij} \approx \rho^{|i-j|}\). Whether the forecast errors keep more memory than that (their partial autocorrelation at lags 2–3) is not yet measured.</p>
+
+<h2 id="weak">§5 Known weaknesses</h2>
+<ul>
+  <li><b>Bands slightly too narrow:</b> 77% coverage for an 80% band.</li>
+  <li><b>Tails beyond the 99% quantile are extrapolated.</b> The 11-bin top state averages the top 9%, so it's robust. The continuous state's top node sits at score 3 (top 0.25%) and inherits the extrapolation: 3,493 SGD on 15 Sep 2026 against 1,185 for the top bin.</li>
+  <li><b>Reserve medians undervalue reserves</b> by ~14% (right skew). The mean fixes the point value.</li>
+  <li><b>Gaussian dependence:</b> no tail dependence (spikes cluster more than a Gaussian copula allows), and one \(\Sigma\) per month regardless of regime.</li>
+  <li><b>Covariates:</b> demand is past-only, and EMC pre-dispatch isn't a covariate yet. On a first, tiny sample (64 points, one night), Chronos-2 had half the error of pre-dispatch (MAE 22.7 vs 49.2) but pre-dispatch was better one half-hour ahead and biased in a learnable way.</li>
+  <li><b>No model of how the forecast itself evolves.</b> The SDP's chain models realised prices, not forecast updates.</li>
+</ul>
+
+<!-- ============================================================ -->
+<section class="method" id="f1">
+<h2><span class="tag">F1</span>Calibration and adaptivity</h2>
+<div class="facts">
+  <div><b>Fixes</b>Coverage, bias, drift</div>
+  <div><b>Effort</b>Small</div>
+  <div><b>SDP fit</b>Direct: better marginals and means</div>
+</div>
+<p><b>Adaptive conformal inference</b> (ACI) keeps a band's coverage on target under drift by nudging the quantile level after each observation. For a target miss rate \(\alpha\) and step \(\gamma\):</p>
+<div class="eq">\[ \alpha_{t+1} = \alpha_t + \gamma\,\big(\alpha - \mathbf 1[y_t \notin \text{band}_t(\alpha_t)]\big). \]</div>
+<p>Applied per quantile level (or to the whole PIT distribution through a rolling isotonic map \(u \mapsto \tilde u\)), it turns 77% into 80% without retraining. Other cheap steps:</p>
+<ul>
+  <li><b>Online bias correction</b> of the location by lead time and hour of day.</li>
+  <li><b>Online forecast combination</b> on the CRPS (Bernstein online aggregation, “CRPS learning”): weights per quantile level move towards whichever source has been right lately.</li>
+  <li><b>Fine-tuning Chronos-2</b> on NEMS history (LoRA), within one regime, kept only if profit improves.</li>
+</ul>
+</section>
+
+<section class="method" id="f2">
+<h2><span class="tag">F2</span>Tails and spikes</h2>
+<div class="facts">
+  <div><b>Fixes</b>Top states, spike timing</div>
+  <div><b>Effort</b>Small to medium</div>
+  <div><b>SDP fit</b>Direct: the top states hold the value</div>
+</div>
+<ul>
+  <li><b>Extreme-value tail.</b> Beyond the 95% quantile, fit a generalised Pareto tail on past exceedances instead of extrapolating: \(\mathbb P(Y > q_{0.95} + y \mid Y > q_{0.95}) = (1 + \xi y/\sigma)^{-1/\xi}\), capped at the market price cap (4,500 SGD/MWh).</li>
+  <li><b>Spike probability model.</b> A classifier for \(\mathbb P(\text{spike at } t \mid \mathcal F_s)\), mixed with the body: \(F = (1-\pi_t) F_{\text{body}} + \pi_t F_{\text{spike}}\). Spikes depend on reserve margins, outages and interties, which a classifier can use better than a quantile head.</li>
+  <li><b>Quantile gradient boosting on residuals</b>, as the design doc planned, for the extreme deciles where foundation models are weakest.</li>
+</ul>
+</section>
+
+<section class="method" id="f3">
+<h2><span class="tag">F3</span>Models shaped for the SDP</h2>
+<div class="facts">
+  <div><b>Fixes</b>Dependence in the form the SDP uses</div>
+  <div><b>Effort</b>Medium</div>
+  <div><b>SDP fit</b>Native: they define the state and transitions</div>
+</div>
+<p>Instead of fitting a 48×48 copula and then reading one number from it, fit the dependence directly in the form the SDP consumes: a small Markov state.</p>
+<ul>
+  <li><b>Gaussian Markov copula.</b> AR(1) or AR(2) on normal scores, with \(\rho\) by lead time or hour of day. Scenarios and the lattice then come from one model. First check the partial autocorrelation of the errors.</li>
+  <li><b>Regime switching.</b> A hidden regime \(R_t \in \{\text{calm}, \text{tight}\}\) with transition matrix \(Q\), and a price model per regime (Hamilton; Janczura &amp; Weron for electricity):
+    <div class="eq">\[ z_t \mid R_t = j \;\sim\; \mathcal N\big(\mu_j + \rho_j (z_{t-1} - \mu_j),\ \sigma_j^2\big), \qquad \mathbb P(R_{t+1} = j' \mid R_t = j) = Q_{jj'}. \]</div>
+    The SDP state becomes (regime, price bin). The regime is not observed, so in practice the state is the filtered probability \(\mathbb P(R_t = \text{tight} \mid \mathcal F_t)\), binned. This captures spike clustering, which a single AR(1) cannot.</li>
+  <li><b>Slow factor plus fast noise.</b> \(z_t = a L_t + \sqrt{1-a^2}\, u_t\), with \(L\) a slowly moving level (a forecast that is off all day) and \(u\) fast AR(1) noise. Two coordinates of the continuous state (M9).</li>
+  <li><b>Martingale model of forecast evolution.</b> Model how the forecast for a fixed delivery interval changes from issue to issue: \(\hat\lambda_{t\mid s+1} = \hat\lambda_{t\mid s} + \varepsilon_{s+1,t}\), with the updates uncorrelated over \(s\). That's the right object for rolling decisions: it says how much a later decision will know, which is what the value of waiting depends on.</li>
+  <li><b>Transitions learnt from trajectories.</b> Once paths are good, estimate the transition table directly (kernel regression on paths, page M9). No parametric form.</li>
+</ul>
+</section>
+
+<section class="method" id="f4">
+<h2><span class="tag">F4</span>Generative paths: diffusion and flows</h2>
+<div class="facts">
+  <div><b>Fixes</b>Non-Gaussian, multivariate dependence</div>
+  <div><b>Effort</b>Large (research)</div>
+  <div><b>SDP fit</b>Through learnt transitions or LSMC</div>
+</div>
+<p>A diffusion model learns to turn noise into realistic paths by reversing a noising process. For a path \(\boldsymbol x\) conditioned on context \(\boldsymbol c\) (history, covariates), training minimises the denoising error</p>
+<div class="eq">\[ \mathcal L = \mathbb E_{k,\boldsymbol x,\boldsymbol\epsilon}\Big[\big\|\boldsymbol\epsilon - \epsilon_\theta\big(\sqrt{\bar\alpha_k}\,\boldsymbol x + \sqrt{1-\bar\alpha_k}\,\boldsymbol\epsilon,\ k,\ \boldsymbol c\big)\big\|^2\Big], \]</div>
+<p>and sampling runs the learnt denoiser backwards from pure noise. Examples: TimeGrad (autoregressive), CSDI (imputation: fill in missing parts of a path), TSDiff (unconditional model steered at sampling time).</p>
+<ul>
+  <li><b>What it adds:</b> joint paths for all four prices at once, spike clustering and tail dependence, no Gaussian assumption.</li>
+  <li><b>Conditioning on a prefix</b> (CSDI-style imputation) gives \(\mathbb P(\lambda_{t+1:T} \mid \lambda_{1:t})\) directly: exactly the conditional samples that learnt transitions or LSMC need.</li>
+  <li><b>Limits:</b> few years of data with a regime break in 2023, heavy compute per issue, and hard calibration. A cheaper intermediate is a vine or t-copula on top of Chronos-2 marginals (tail dependence, still fast).</li>
+</ul>
+</section>
+
+<section class="method" id="f5">
+<h2><span class="tag">F5</span>Mixtures of experts and ensembles</h2>
+<div class="facts">
+  <div><b>Fixes</b>Regime-dependent accuracy</div>
+  <div><b>Effort</b>Small (ensemble) to large (MoE model)</div>
+  <div><b>SDP fit</b>Direct: better marginals</div>
+</div>
+<p>Two different things share the name:</p>
+<ul>
+  <li><b>MoE inside a foundation model.</b> Time-MoE and Moirai-MoE route each input to a few specialised expert sub-networks. It's a model choice: swap it in and compare downstream profit, like any other foundation model (TimesFM, Moirai, TiRex, Toto).</li>
+  <li><b>Our own mixture over forecasters.</b> Experts: Chronos-2, quantile gradient boosting, EMC pre-dispatch (once archived), persistence. A gate weights them by context \(x_t\) (hour, regime probability, reserve margin), averaging quantiles:
+    <div class="eq">\[ \hat F^{-1}(u \mid x_t) = \sum_{k} w_k(x_t)\, \hat F_k^{-1}(u), \qquad \sum_k w_k = 1,\ w_k \ge 0, \]</div>
+    with weights learnt online on the CRPS (F1). Quantile averaging keeps the marginals well-shaped, and the gate lets the spike expert take over when the system is tight.</li>
+</ul>
+</section>
+
+<section class="method" id="f6">
+<h2><span class="tag">F6</span>Covariates</h2>
+<ul>
+  <li><b>EMC pre-dispatch</b> (prices, demand, reserve requirements): the market's own forecast. The hackathon provides “pre-dispatch market information”, so this is the first covariate to add when the data arrives.</li>
+  <li><b>Demand forecasts</b> (known future) instead of past demand only.</li>
+  <li><b>Outage plans, intertie status, fuel index</b>: the drivers of tight periods and spikes.</li>
+  <li><b>Other weather providers</b> (ICON, GFS, ARPEGE are archived daily by cron); Open-Meteo's free API is non-commercial, so check its terms for the hackathon.</li>
+</ul>
+</section>
+
+<h2 id="eval">§6 How to judge a forecast</h2>
+<ol class="steps">
+  <li><b>Profit first:</b> rerun the year (forecast → SDP → offers → simulator) and compare against the current forecast on the same data. Differences of a few percent between runs can be noise; look for consistent gains across months.</li>
+  <li><b>Marginals:</b> CRPS, coverage of the 10–90% band, PIT histograms by lead time, spike hit rate.</li>
+  <li><b>Dependence:</b> lag-1 and partial autocorrelation of scenario paths vs realised; the energy score and the variogram score of paths, which penalise wrong dependence between steps that marginal scores can't see.</li>
+  <li><b>Means:</b> bias of the forecast mean (not the median) for every product, since revenue is linear in price.</li>
+</ol>
+
+<h2 id="road">§7 Roadmap</h2>
+<div class="box">
+<p class="label">Ordered by expected value per effort, for the hackathon (submission 30 Nov 2026)</p>
+<ol class="steps">
+  <li><b>Pre-dispatch covariate</b> as soon as EMA's datasets arrive (13 Nov).</li>
+  <li><b>Calibration:</b> ACI on the quantile levels, and forecast means for reserves (F1).</li>
+  <li><b>Tail treatment</b> beyond the 95% quantile (F2), needed before trusting the continuous price state.</li>
+  <li><b>Check the Markov assumption</b> (partial autocorrelation), then a regime-switching or two-factor state if memory shows (F3).</li>
+  <li><b>Ensemble with online weights</b> once a second good expert exists (F5).</li>
+  <li><b>Diffusion paths</b> as research after the hackathon (F4).</li>
+</ol>
+</div>
+
+<h2 id="refs">§8 References</h2>
+<ol class="refs">
+  <li>Ansari et al., Chronos-2 technical report, arXiv 2510.15821 (2025).</li>
+  <li>Gibbs &amp; Candès, “Adaptive conformal inference under distribution shift”, NeurIPS 2021. Romano, Patterson &amp; Candès, “Conformalized quantile regression”, NeurIPS 2019.</li>
+  <li>Berrisch &amp; Ziel, “CRPS learning”, <i>Journal of Econometrics</i>, 2023.</li>
+  <li>Hamilton, “A new approach to the economic analysis of nonstationary time series and the business cycle”, <i>Econometrica</i>, 1989. Janczura &amp; Weron, “An empirical comparison of alternate regime-switching models for electricity spot prices”, <i>Energy Economics</i>, 2010.</li>
+  <li>Heath &amp; Jackson, “Modeling the evolution of demand forecasts with application to safety stock analysis in production/distribution systems”, <i>IIE Transactions</i>, 1994.</li>
+  <li>Rasul et al., “Autoregressive denoising diffusion models for multivariate probabilistic time series forecasting” (TimeGrad), ICML 2021. Tashiro et al., CSDI, NeurIPS 2021. Kollovieh et al., TSDiff, NeurIPS 2023.</li>
+  <li>Shi et al., Time-MoE, ICLR 2025. Liu et al., Moirai-MoE, 2024.</li>
+  <li>Aas, Czado, Frigessi &amp; Bakken, “Pair-copula constructions of multiple dependence”, <i>Insurance: Mathematics and Economics</i>, 2009.</li>
+  <li>Gneiting &amp; Raftery, “Strictly proper scoring rules, prediction, and estimation”, <i>JASA</i>, 2007. Scheuerer &amp; Hamill, “Variogram-based proper scoring rules for probabilistic forecasts of multivariate quantities”, <i>Monthly Weather Review</i>, 2015.</li>
+</ol>
+</main>
+</div>

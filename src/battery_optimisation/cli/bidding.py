@@ -68,8 +68,11 @@ def bidding_tag(bidding: BiddingConfig, ancillary: bool) -> str:
         if f.mode is FeasibilityMode.PROBABILISTIC
         else str(f.mode)
     )
+    rho = "" if bidding.markov.rho is None else f"_r{bidding.markov.rho:g}"
     if bidding.price_model is PriceModel.MARKOV:
-        tag += "_markov" + ("" if bidding.markov.rho is None else f"_r{bidding.markov.rho:g}")
+        tag += "_markov" + rho
+    elif bidding.price_model is PriceModel.CONTINUOUS:
+        tag += f"_continuous{bidding.continuous.nodes}" + rho
     if ancillary:
         tag += "_as" + ("" if bidding.firm_reserves else "_hybrid")
         if bidding.reserve_planner is ReservePlanner.SDP:
@@ -180,13 +183,14 @@ def run(
         source = "Chronos-2" if fr.ancillary_quantiles is not None else "persistence"
         typer.echo(f"Ancillary prices forecast by {source}")
     m = bidding.markov
+    n_states = m.states if bidding.price_model is PriceModel.MARKOV else bidding.continuous.nodes
     typer.echo(
         f"Water value prices: {bidding.price_model}"
         + (
-            f" ({m.states} states, rho "
+            f" ({n_states} states, rho "
             + ("walk-forward copula" if m.rho is None else f"{m.rho:g}")
             + ")"
-            if bidding.price_model is PriceModel.MARKOV
+            if bidding.price_model is not PriceModel.INDEPENDENT
             else ""
         )
     )

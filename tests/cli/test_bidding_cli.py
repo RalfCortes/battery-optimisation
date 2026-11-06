@@ -79,3 +79,10 @@ def test_each_bidding_run_gets_its_own_folder(tmp_path) -> None:
     (first / "report.json").write_text("{}")
     (second / "report.json").write_text("{}")
     assert list_bidding_runs(tmp_path) == [second, first]  # newest first, no "latest" twice
+
+
+def test_continuous_price_state_runs_get_their_own_folders() -> None:
+    b = load_bidding().model_copy(update={"price_model": PriceModel.CONTINUOUS})
+    assert bidding_tag(b, False) == f"market_continuous{b.continuous.nodes}"
+    fixed = b.model_copy(update={"markov": b.markov.model_copy(update={"rho": 0.83})})
+    assert bidding_tag(fixed, True) == f"market_continuous{b.continuous.nodes}_r0.83_as_sdpres"

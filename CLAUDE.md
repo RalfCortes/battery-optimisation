@@ -96,6 +96,14 @@ clearing simulator on held-out data.
        rho = walk-forward copula lag-1 of the month (or `markov.rho`). V per state; offer curve =
        optimal response on a price grid (`water_value.optimal_net_mw`, value after t depends on
        the price at t: `ValueFunction.continuation_at`).
+     - `continuous`: same `LatticeStages` with `node_lattice` (`continuous: nodes, z_max`):
+       continuous price state (fitted value iteration). V at 21 normal-score nodes on [-3, 3],
+       linear in between (hat functions), so E[V(z') | z_j] = sum_l T[j, l] V(z_l) with exact
+       hat expectations of the AR(1) (`hat_expectations`): a stochastic matrix, same SDP code.
+       Node price = local mean under its hat (keeps the stage mean); AR(1) noise variance
+       reduced by rho^2 h^2/6 (what interpolation adds) to keep N(0, 1) stationary. The
+       dependence model only sets `transitions` (later: kernel regression on trajectories).
+       Methods overview (energy, then reserves, with equations): `docs/dispatch-methods.html`.
      - `independent`: `ScenarioStages`, stagewise marginals of the copula scenarios. Ignores price
        persistence -> fake spreads: the SDP expected 25 M SGD/yr where perfect foresight makes 16 M,
        and re-planning more often made it *worse* (rolling 6.74 M < daily 6.98 M). Markov: daily
@@ -278,12 +286,37 @@ data/         # raw/ and processed/ (git-ignored)
 4. SDP water value + offer curves → measure bidding uplift.
 5. Forecast upgrades (tail model, fine-tuning), kept only if capture rate improves.
 
+## Important TODOs
+- **Priced reserve offers (closed loop in the reserve price).** Reserves are offered at 0 SGD/MW/h
+  (always clear, paid the clearing price) with the MW fixed by the SDP at gate closure from the
+  *expected* reserve price: the hold cannot react to the interval's actual reserve price (30 MW
+  committed for an expected 15 still held if it clears at 2). Offer a rising curve per product
+  instead, priced at the opportunity cost: energy margin given up (power used) + value of the
+  SoC headroom held (water value over the RC386 band) + expected activation cost; built like the
+  energy curve (sweep the reserve price, MW the SDP would hold). Check first how the NEMS
+  co-optimisation treats a storage unit's energy vs reserve curves (the simulator does not model
+  that interaction in detail) before trusting the gain.
+- Realistic reserve award caps / price impact (`max_award_mw` = 100 each overstates revenue).
+
 ## Open questions (check challenge rules before assuming)
 - What is scored: offers through a simulator, or a schedule? Test period?
 - Battery parameters, degradation model, cycle limits.
 - Which products are allowed; number of tranches; price floor and cap.
 - Charging as price-responsive load or scheduled?
-- Gate closure and intraday re-bidding allowed?
+- Gate closure and intraday re-bidding: answered by Market Rules ch. 6 (1 Oct 2025). Storage is
+  a generation registered facility and must always hold a valid *standing offer* (by day of week)
+  for every dispatch period, for energy and for each reserve/regulation product it is registered
+  for (5.1.1-5.1.3). *Offer variations* for specific periods replace it, and both can be revised
+  at any time (5.1.4) until 65 min before the period (gate closure, 10.4.1; exceptions are
+  outages/advisories only, and the price may not change). The engine uses the last accepted
+  valid offer at schedule computation (5.8.2-5.8.3). So re-bidding every half-hour is allowed:
+  the offer that counts for t is the one in force at t - 65 min (our rolling design), while
+  offers for all later periods must always exist (fallback; they also feed pre-dispatch, 12-36 h,
+  and market outlook, 7 days). 5.1.5: offered quantity must not exceed what is reasonably
+  expected to be available by more than max(10 MW, 5%). The storage offer also states a maximum
+  combined transfer limit (energy + reserve + regulation) and ramp rates (5.2B.2.5-6): not in
+  our offer format yet. Hackathon (EMA, Nov 2026): "bid quantities and prices ... for each
+  trading period"; when EMA calls the algorithm is not stated (ask EMA).
 - Regulation symmetric or split up/down; how activated energy is settled.
 - Price-taker assumption valid, or does the simulator model our price impact?
 

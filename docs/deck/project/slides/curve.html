@@ -1,0 +1,16 @@
+<section id="curve" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:36px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:64px;font-weight:700;line-height:1.1">From value function to submitted offer</h2>
+<table style="font-size:26px;color:#14213D;width:1664px">
+<tr><th style="width:6%;text-align:left">#</th><th style="width:28%;text-align:left">Step</th><th style="width:66%;text-align:left">What it does</th></tr>
+<tr><td>1</td><td>Reserves</td><td>Pick the mix best in expectation over price states at the expected SoC</td></tr>
+<tr style="background:#EEF1F5"><td>2</td><td>Optimal response</td><td>Best SoC move for ~500 prices (50 per gap between states + beyond), moves that fit beside the reserves</td></tr>
+<tr><td>3</td><td>Rising fit</td><td>Closest net-MW curve rising with price (isotonic regression)</td></tr>
+<tr style="background:#EEF1F5"><td>4</td><td>Band trim</td><td>Drop tranches no forecast price state could clear</td></tr>
+<tr><td>5</td><td>Compress</td><td>5 charge + 5 discharge tranches, breakpoints where the curve is steepest</td></tr>
+<tr style="background:#EEF1F5"><td>6</td><td>Price-taking</td><td>Tranches beyond every plausible price go to floor/cap, kept in price order</td></tr>
+<tr><td>7</td><td>Volumes</td><td>Capped by what the expected SoC can deliver (or worst case, option)</td></tr>
+<tr style="background:#EEF1F5"><td>8</td><td>Format</td><td>Prices to 2 decimals, MW rounded down to 0.1; reserves offered at 0</td></tr>
+</table>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">bidding/strategy.py (curve_steps), water_value.py, compress.py · price sweep re-solves each interval to check the curve</p>
+<aside>Expected SoC at the target = decision SoC plus own pending offers cleared under the forecast states. Worst-case mode assumes every pending tranche clears.</aside>
+</section>

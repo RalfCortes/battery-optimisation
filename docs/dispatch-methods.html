@@ -1,0 +1,773 @@
+<title>Dispatch Under Price Trajectories</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']], tags: 'none' },
+  svg: { fontCache: 'global' },
+  options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+};
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg-full.min.js" defer></script>
+<style>
+/* Layout: textbook chapter. Sticky contents rail on wide screens, one reading column, equations in their own scroll boxes. */
+:root {
+  --paper: #f4f6f9;
+  --panel: #ffffff;
+  --ink: #131923;
+  --muted: #586273;
+  --rule: #d6dce5;
+  --accent: #1a56c4;
+  --accent-soft: #e4ecfb;
+  --warm: #a24a07;
+  --warm-soft: #fbeee2;
+  --good: #1f7a4d;
+  --good-soft: #e3f3ea;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0d1219; --panel: #141b26; --ink: #e5eaf1; --muted: #97a2b2; --rule: #253043;
+    --accent: #7ea8ff; --accent-soft: #1a2640; --warm: #f2a65e; --warm-soft: #2c2016;
+    --good: #6fd19c; --good-soft: #142a20; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0d1219; --panel: #141b26; --ink: #e5eaf1; --muted: #97a2b2; --rule: #253043;
+  --accent: #7ea8ff; --accent-soft: #1a2640; --warm: #f2a65e; --warm-soft: #2c2016;
+  --good: #6fd19c; --good-soft: #142a20; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink);
+  font-family: var(--body); font-size: 17px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 80px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 48px; }
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-family: var(--display); font-size: 14px; }
+nav.toc p { margin: 0 0 8px; text-transform: uppercase; letter-spacing: .08em; font-size: 12px; color: var(--muted); font-weight: 600; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+nav.toc a { color: var(--ink); text-decoration: none; display: flex; gap: 8px; }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); }
+nav.toc .n { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 2.2em; padding-top: 2px; }
+main { min-width: 0; max-width: 760px; }
+header.top { margin-bottom: 40px; }
+.eyebrow { font-family: var(--display); text-transform: uppercase; letter-spacing: .1em; font-size: 12px; font-weight: 700; color: var(--accent); }
+h1 { font-family: var(--display); font-stretch: 85%; font-weight: 800; font-size: clamp(32px, 5vw, 46px); line-height: 1.05; margin: 8px 0 16px; text-wrap: balance; }
+h2 { font-family: var(--display); font-stretch: 88%; font-weight: 750; font-size: 28px; line-height: 1.15; margin: 64px 0 12px; text-wrap: balance; scroll-margin-top: 24px; }
+h3 { font-family: var(--display); font-weight: 650; font-size: 19px; margin: 28px 0 6px; }
+.lede { font-size: 19px; color: var(--muted); max-width: 62ch; }
+p, li { max-width: 68ch; }
+a { color: var(--accent); }
+code { font-family: var(--mono); font-size: .86em; background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+.eq { overflow-x: auto; overflow-y: hidden; margin: 14px 0; padding: 4px 0; }
+mjx-container[display="true"] { margin: 0 !important; }
+.box { border: 1px solid var(--rule); background: var(--panel); border-radius: 10px; padding: 18px 22px; margin: 20px 0; }
+.box > :first-child { margin-top: 0; }
+.box > :last-child { margin-bottom: 0; }
+.key { border-left: 4px solid var(--accent); background: var(--accent-soft); border-radius: 0 10px 10px 0; padding: 14px 20px; margin: 20px 0; }
+.key > :first-child { margin-top: 0; } .key > :last-child { margin-bottom: 0; }
+.warn { border-left: 4px solid var(--warm); background: var(--warm-soft); border-radius: 0 10px 10px 0; padding: 14px 20px; margin: 20px 0; }
+.warn > :first-child { margin-top: 0; } .warn > :last-child { margin-bottom: 0; }
+.label { font-family: var(--display); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; color: var(--muted); margin: 0 0 4px; }
+.method { border-top: 2px solid var(--ink); margin-top: 56px; padding-top: 4px; }
+.method h2 { margin-top: 10px; display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+.tag { font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--paper); background: var(--ink); padding: 2px 8px; border-radius: 5px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; margin: 14px 0 18px; font-family: var(--display); font-size: 14px; }
+.facts div { background: var(--panel); padding: 10px 12px; min-width: 0; }
+.facts b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 700; margin-bottom: 2px; }
+.verdict { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }
+.verdict > div { border-radius: 8px; padding: 12px 16px; min-width: 0; }
+.verdict .pro { background: var(--good-soft); }
+.verdict .con { background: var(--warm-soft); }
+.verdict ul { margin: 4px 0 0; padding-left: 18px; font-size: 15.5px; }
+.verdict .pro .label { color: var(--good); } .verdict .con .label { color: var(--warm); }
+.steps { counter-reset: s; list-style: none; padding: 0; display: grid; gap: 10px; }
+.steps li { counter-increment: s; position: relative; padding-left: 40px; }
+.steps li::before { content: counter(s); position: absolute; left: 0; top: 2px; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-family: var(--mono); font-size: 13px; font-weight: 600; display: grid; place-items: center; }
+figure { margin: 24px 0; }
+.trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.trio > div { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 12px 10px; min-width: 0; }
+.trio svg { width: 100%; height: auto; display: block; }
+.trio h4 { font-family: var(--display); font-size: 15px; margin: 8px 0 2px; }
+.trio p { font-size: 14.5px; margin: 0; color: var(--muted); line-height: 1.45; }
+figcaption { font-size: 14.5px; color: var(--muted); margin-top: 10px; }
+.tablewrap { overflow-x: auto; margin: 18px 0; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); }
+table { border-collapse: collapse; font-family: var(--display); font-size: 14px; min-width: 820px; width: 100%; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 700; background: var(--paper); }
+tr:last-child td { border-bottom: 0; }
+td.m { font-family: var(--mono); font-weight: 600; white-space: nowrap; }
+.num { font-variant-numeric: tabular-nums; }
+.yes { color: var(--good); font-weight: 650; } .no { color: var(--warm); font-weight: 650; }
+.refs { font-size: 15px; } .refs li { margin-bottom: 6px; }
+.part2head { margin-top: 96px; padding-top: 32px; border-top: 6px double var(--rule); scroll-margin-top: 24px; }
+.method ul { padding-left: 20px; }
+svg .ln { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+svg .lnA { stroke: var(--accent); stroke-width: 2.2; fill: none; }
+svg .nd { fill: var(--panel); stroke: var(--ink); stroke-width: 1.6; }
+svg .ndA { fill: var(--accent); stroke: var(--accent); stroke-width: 1.6; }
+svg .ax { stroke: var(--rule); stroke-width: 1; }
+svg text { fill: var(--muted); font-family: var(--mono); font-size: 11px; }
+@media (max-width: 960px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  nav.toc { position: static; border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; background: var(--panel); }
+  nav.toc ol { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+}
+@media (max-width: 620px) {
+  body { font-size: 16px; }
+  .trio, .verdict { grid-template-columns: minmax(0, 1fr); }
+  h2 { font-size: 24px; }
+}
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#problem"><span class="n">§1</span>The problem</a></li>
+    <li><a href="#facts"><span class="n">§2</span>Two facts that frame it</a></li>
+    <li><a href="#info"><span class="n">§3</span>Fan, tree, lattice</a></li>
+    <li><a href="#m1"><span class="n">M1</span>Deterministic MPC</a></li>
+    <li><a href="#m2"><span class="n">M2</span>Two-stage stochastic</a></li>
+    <li><a href="#m3"><span class="n">M3</span>Multi-stage on a tree</a></li>
+    <li><a href="#m4"><span class="n">M4</span>SDP on a Markov state</a></li>
+    <li><a href="#m5"><span class="n">M5</span>SDDP</a></li>
+    <li><a href="#m6"><span class="n">M6</span>Least-squares Monte Carlo</a></li>
+    <li><a href="#m7"><span class="n">M7</span>Policy search</a></li>
+    <li><a href="#m8"><span class="n">M8</span>Duality bounds</a></li>
+    <li><a href="#m9"><span class="n">M9</span>Continuous state</a></li>
+    <li><a href="#compare"><span class="n">§4</span>Side by side</a></li>
+    <li><a href="#ours"><span class="n">§5</span>Where our pipeline sits</a></li>
+  </ol>
+  <p style="margin-top:20px">Part 2 · Reserves</p>
+  <ol>
+    <li><a href="#p2-changes"><span class="n">§7</span>What changes</a></li>
+    <li><a href="#p2-problem"><span class="n">§8</span>The extended problem</a></li>
+    <li><a href="#p2-facts"><span class="n">§9</span>The facts, revisited</a></li>
+    <li><a href="#p2-state"><span class="n">§10</span>Four-price state</a></li>
+    <li><a href="#p2-methods"><span class="n">§11</span>Method by method</a></li>
+    <li><a href="#p2-impact"><span class="n">§12</span>Price impact</a></li>
+    <li><a href="#p2-ours"><span class="n">§13</span>Where we sit</a></li>
+    <li><a href="#refs"><span class="n">§14</span>References</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="top">
+  <div class="eyebrow">Part 1 · Energy only</div>
+  <h1>Dispatch Under Price Trajectories</h1>
+  <p class="lede">How to turn a set of joint price paths into dispatch decisions and offers for a 100&nbsp;MW / 100&nbsp;MWh battery, method by method. Every method answers the same question differently: what does the battery know when it decides?</p>
+</header>
+
+<!-- ============================================================ -->
+<h2 id="problem">§1 The problem</h2>
+
+<h3>Prices</h3>
+<p>Time runs over intervals \(t = 1,\dots,T\) of length \(\Delta = 0.5\) h (\(T = 48\) for one day). Prices are a random vector \(\boldsymbol\lambda = (\lambda_1,\dots,\lambda_T)\) in SGD/MWh. The forecast gives us its joint law as \(M\) trajectories with weights:</p>
+<div class="eq">\[ \boldsymbol\lambda^{\omega} = (\lambda^{\omega}_1,\dots,\lambda^{\omega}_T), \qquad \Pr(\boldsymbol\lambda = \boldsymbol\lambda^{\omega}) = p_\omega, \qquad \omega = 1,\dots,M. \]</div>
+<p>These are whole paths, so they carry the dependence between steps: a high price at 18:00 makes a high price at 18:30 more likely.</p>
+
+<h3>Battery</h3>
+<p>State: the stored energy \(s_t\) (MWh) at the start of interval \(t\). Actions: charge \(c_t\) and discharge \(d_t\) (MW). One binary \(u_t\) forbids doing both at once.</p>
+<div class="eq">\[
+\begin{aligned}
+s_{t+1} &= s_t + \Delta\Big(\eta_c\, c_t - \frac{d_t}{\eta_d}\Big), \qquad \underline S \le s_{t+1} \le \overline S,\\
+0 \le c_t &\le \overline P\, u_t, \qquad 0 \le d_t \le \overline P\,(1-u_t), \qquad u_t \in \{0,1\}.
+\end{aligned}
+\]</div>
+<p>Write \(a_t = (c_t, d_t)\) and \(\mathcal A(s_t)\) for the actions that keep all of this true. The cash in interval \(t\) is the energy sold minus wear:</p>
+<div class="eq">\[ r(\lambda_t, a_t) = \lambda_t\,(d_t - c_t)\,\Delta \;-\; \kappa\,(c_t + d_t)\,\Delta. \]</div>
+<p>Energy left at the end is worth \(\Phi(s_{T+1})\): a terminal value, or a penalty below the starting SoC.</p>
+
+<h3>Information</h3>
+<p>This is the part that decides everything. Let \(\mathcal F_t\) be what is known when deciding \(a_t\): the prices up to and including \(t\), and every forecast and covariate published by then:</p>
+<div class="eq">\[ \mathcal F_t = \sigma\big(\lambda_1,\dots,\lambda_t,\ \text{forecasts and covariates issued up to } t\big). \]</div>
+<p>A <b>policy</b> \(\pi = (\pi_1,\dots,\pi_T)\) maps what is known to an action: \(a_t = \pi_t(s_t, \mathcal F_t)\). It is <b>non-anticipative</b>: it never uses the realised \(\lambda_{t+1},\dots,\lambda_T\). The problem is</p>
+<div class="eq">\[ V^\star \;=\; \max_{\pi\ \text{non-anticipative}} \; \mathbb E\Big[\sum_{t=1}^{T} r\big(\lambda_t, \pi_t(s_t,\mathcal F_t)\big) + \Phi(s_{T+1})\Big]. \]</div>
+<div class="key">
+<p class="label">Non-anticipative still uses the forecast</p>
+<p>The forecast is part of \(\mathcal F_t\): it <i>is</i> the conditional law of future prices given what is known at \(t\). A non-anticipative policy looks ahead through \(\mathbb E[V_{t+1} \mid \mathcal F_t]\), computed with the forecast's trajectories. What it may not do is act differently depending on <i>which</i> trajectory will actually happen.</p>
+<p>Example: at 17:00 the forecast gives a 50% chance of a 19:00 spike. A non-anticipative policy picks one SoC at 17:00 for both cases. An anticipative model stays full only in the spike trajectories and discharges early in the others, booking both profits. No real battery can earn that.</p>
+</div>
+
+<div class="key">
+<p class="label">Why “knows \(\lambda_t\)” is right with offers</p>
+<p>In NEMS the offer for interval \(t\) is fixed at gate closure, two intervals earlier, so the battery doesn't know \(\lambda_t\) when it submits. But it submits a <b>curve</b> \(q_t(\cdot)\), and the market picks the point \(q_t(\lambda_t)\) once the price is set. A price-taker's offer curve is exactly a policy that reacts to \(\lambda_t\) while using only the information \(\mathcal F_{t-2}\) available at gate closure:</p>
+<div class="eq">\[ a_t = q_t(\lambda_t), \qquad q_t \text{ chosen with } \mathcal F_{t-2}. \]</div>
+<p>So every method below yields offers in the same way: it gives the best action for each possible \(\lambda_t\), and that response is the curve.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="facts">§2 Two facts that frame everything</h2>
+
+<h3>Fact 1: a fixed schedule only needs the mean</h3>
+<p><b>Open loop</b> means every action is fixed now and never changed, whatever prices turn out to be. <b>Closed loop</b> means an action can react to prices once they're seen. In bidding terms, a self-scheduled quantity (“sell 50 MW at any price”) is open loop, and an offer curve \(\text{MW} = f_t(\text{price})\) is closed loop.</p>
+<div class="box">
+<p class="label">Example</p>
+<p>You hold 1 MWh. Sell it at 19:00 tonight, or keep it and sell tomorrow at a known 180 SGD/MWh. The 19:00 price is 100 or 300, 50% each (mean 200).</p>
+<ul>
+  <li><b>Open loop.</b> Choose now: selling is worth \(0.5\times100 + 0.5\times300 = 200\), keeping 180. Sell: 200. With prices of 0 or 400 (same mean) the decision and the value are exactly the same.</li>
+  <li><b>Closed loop.</b> “Sell only if the price is above 180”: \(0.5\times300 + 0.5\times180 = 240\). With 0 or 400 it becomes \(0.5\times400 + 0.5\times180 = 290\). Now the spread matters, because you can react to it.</li>
+</ul>
+</div>
+<p>In general: take any schedule \(a = (a_1,\dots,a_T)\) fixed in advance (open loop). Cash is linear in the prices, so</p>
+<div class="eq">\[ \mathbb E\Big[\sum_t r(\lambda_t, a_t)\Big] = \sum_t \Big(\mathbb E[\lambda_t]\,(d_t - c_t) - \kappa\,(c_t + d_t)\Big)\Delta = \sum_t r(\bar\lambda_t, a_t), \qquad \bar\lambda_t = \mathbb E[\lambda_t]. \]</div>
+<p>The best fixed schedule is the deterministic MILP on the <b>mean</b> price path. The spread, the quantiles and the correlation between steps play no part in it. (It should be the mean, not the median: with right-skewed prices the median understates every interval.)</p>
+<div class="key"><p><b>Consequence.</b> All the extra value of trajectories comes from <b>adapting</b>: changing later actions after seeing later prices. A method that doesn't model how it will adapt can't get value from the distribution, however rich the distribution is.</p></div>
+
+<h3>Fact 2: three values, in a fixed order</h3>
+<div class="eq">\[
+\underbrace{\max_a \textstyle\sum_t r(\bar\lambda_t,a_t)}_{V^{\text{EV}}\ \text{best fixed schedule}}
+\;\le\;
+\underbrace{V^\star}_{\text{best policy}}
+\;\le\;
+\underbrace{\textstyle\sum_\omega p_\omega \max_{a} \sum_t r(\lambda^\omega_t,a_t)}_{V^{\text{WS}}\ \text{perfect foresight, path by path}}
+\]</div>
+<p>\(V^{\text{WS}}\) (“wait and see”) solves each trajectory as if it were known in advance. The gaps have names: \(V^\star - V^{\text{EV}}\) is the <b>value of the stochastic solution</b> (what adapting is worth), and \(V^{\text{WS}} - V^\star\) is the <b>expected value of perfect information</b> (what no honest method can capture).</p>
+<p>For a sense of scale, here are the realised energy-only results for our 12-month backtest. These are realised outcomes, not the model values above, but they sit in the same order: self-schedule on a point forecast 5.99&nbsp;M SGD, water-value SDP 9.42&nbsp;M, perfect foresight 16.65&nbsp;M.</p>
+
+<!-- ============================================================ -->
+<h2 id="info">§3 The real difficulty: fan, tree, lattice</h2>
+<p>\(M\) trajectories describe the joint law. They don't say which of them the battery can still tell apart at time \(t\). That second piece of information, the <b>filtration</b>, is what every multi-stage method needs, and the methods differ mainly in how they supply it.</p>
+
+<figure>
+<div class="trio">
+  <div>
+    <svg viewBox="0 0 200 130" role="img" aria-label="Fan: five paths leave one root and never meet again">
+      <line class="ax" x1="20" y1="118" x2="190" y2="118"/>
+      <path class="ln" d="M20 65 C60 65 80 20 190 18"/>
+      <path class="ln" d="M20 65 C60 65 90 45 190 42"/>
+      <path class="lnA" d="M20 65 C60 65 100 70 190 66"/>
+      <path class="ln" d="M20 65 C60 65 90 88 190 90"/>
+      <path class="ln" d="M20 65 C60 65 80 110 190 112"/>
+      <circle class="ndA" cx="20" cy="65" r="5"/>
+      <text x="16" y="128">t</text><text x="176" y="128">T</text>
+    </svg>
+    <h4>Fan of trajectories</h4>
+    <p>What a forecast sampler gives. After the first step each path is alone, so a decision allowed to depend on “which path” is clairvoyant.</p>
+  </div>
+  <div>
+    <svg viewBox="0 0 200 130" role="img" aria-label="Tree: branches split at a few stages and never merge">
+      <line class="ax" x1="20" y1="118" x2="190" y2="118"/>
+      <path class="ln" d="M20 65 L80 35 M20 65 L80 95 M80 35 L140 20 M80 35 L140 50 M80 95 L140 80 M80 95 L140 110 M140 20 L190 14 M140 20 L190 26 M140 50 L190 44 M140 50 L190 56 M140 80 L190 74 M140 80 L190 86 M140 110 L190 104 M140 110 L190 116"/>
+      <path class="lnA" d="M20 65 L80 35 L140 50 L190 56"/>
+      <circle class="ndA" cx="20" cy="65" r="5"/>
+      <circle class="ndA" cx="80" cy="35" r="5"/><circle class="nd" cx="80" cy="95" r="5"/>
+      <circle class="nd" cx="140" cy="20" r="5"/><circle class="ndA" cx="140" cy="50" r="5"/><circle class="nd" cx="140" cy="80" r="5"/><circle class="nd" cx="140" cy="110" r="5"/>
+      <text x="16" y="128">t</text><text x="176" y="128">T</text>
+    </svg>
+    <h4>Scenario tree</h4>
+    <p>Paths share a node until they become distinguishable. Exact non-anticipativity, but the node count grows as \(b^{\text{stages}}\).</p>
+  </div>
+  <div>
+    <svg viewBox="0 0 200 130" role="img" aria-label="Lattice: three states per stage, every state connects to every state of the next stage">
+      <line class="ax" x1="20" y1="118" x2="190" y2="118"/>
+      <g class="ln">
+        <path d="M20 65 L75 30 M20 65 L75 65 M20 65 L75 100"/>
+        <path d="M75 30 L130 30 M75 30 L130 65 M75 30 L130 100 M75 65 L130 30 M75 65 L130 65 M75 65 L130 100 M75 100 L130 30 M75 100 L130 65 M75 100 L130 100"/>
+        <path d="M130 30 L185 30 M130 30 L185 65 M130 30 L185 100 M130 65 L185 30 M130 65 L185 65 M130 65 L185 100 M130 100 L185 30 M130 100 L185 65 M130 100 L185 100"/>
+      </g>
+      <path class="lnA" d="M20 65 L75 30 L130 65 L185 30"/>
+      <circle class="ndA" cx="20" cy="65" r="5"/>
+      <circle class="ndA" cx="75" cy="30" r="5"/><circle class="nd" cx="75" cy="65" r="5"/><circle class="nd" cx="75" cy="100" r="5"/>
+      <circle class="nd" cx="130" cy="30" r="5"/><circle class="ndA" cx="130" cy="65" r="5"/><circle class="nd" cx="130" cy="100" r="5"/>
+      <circle class="ndA" cx="185" cy="30" r="5"/><circle class="nd" cx="185" cy="65" r="5"/><circle class="nd" cx="185" cy="100" r="5"/>
+      <text x="16" y="128">t</text><text x="176" y="128">T</text>
+    </svg>
+    <h4>Markov lattice</h4>
+    <p>Paths that reach the same state <i>recombine</i>: the future depends only on the current state. \(K\) states per stage, so size \(K\cdot T\) instead of \(K^T\).</p>
+  </div>
+</div>
+<figcaption>The highlighted route is one trajectory. In the fan it is a single isolated line, in the tree it shares nodes with its neighbours early on, and in the lattice it passes through states shared with every other path.</figcaption>
+</figure>
+
+<p>Full non-anticipativity on discretised prices with \(K\) levels needs the whole history as the state: \(K^{T}\) nodes, \(11^{48} \approx 10^{50}\) for our grid. Every practical method gives up something to avoid that:</p>
+<ul>
+  <li>it ignores adaptation (M1);</li>
+  <li>it adapts only once (M2);</li>
+  <li>it branches only a few times (M3);</li>
+  <li>it summarises the history in a small state (M4, M5, M6);</li>
+  <li>it restricts the shape of the policy (M7).</li>
+</ul>
+
+<!-- ============================================================ -->
+<section class="method" id="m1">
+<h2><span class="tag">M1</span>Deterministic MPC on a point forecast</h2>
+<div class="facts">
+  <div><b>Information</b>Re-forecast and re-solve; one path per solve</div>
+  <div><b>Uses the trajectories</b>Only their mean</div>
+  <div><b>In our pipeline</b>Self-schedule baseline</div>
+</div>
+<p>At each decision time \(t\), take the point forecast \(\hat\lambda_{\tau\mid t}\) for \(\tau = t,\dots,t+H\), solve the deterministic MILP, apply the first action, and repeat at \(t+1\) with a fresh forecast:</p>
+<div class="eq">\[ \max_{a_t,\dots,a_{t+H}} \sum_{\tau=t}^{t+H} r(\hat\lambda_{\tau\mid t}, a_\tau) + \Phi(s_{t+H+1}) \quad \text{s.t. battery constraints from } s_t. \]</div>
+<p>By Fact 1, \(\hat\lambda_{\tau\mid t} = \mathbb E[\lambda_\tau \mid \mathcal F_t]\) makes this the best <i>fixed</i> plan given today's information. The re-solving does adapt in practice, but the plan itself doesn't know that it will adapt. It gives no value to keeping energy in reserve for a spike that might come. Price-taking offers follow: sell the planned MW at the floor, buy at the cap.</p>
+<div class="verdict">
+  <div class="pro"><p class="label">Strengths</p><ul><li>Simple, fast (~5 s for a year as one MILP)</li><li>Exact physics, binaries included</li></ul></div>
+  <div class="con"><p class="label">Limits</p><ul><li>No option value; plans for the average day, which never happens</li><li>Offer curve is a step at the planned MW</li></ul></div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="method" id="m2">
+<h2><span class="tag">M2</span>Two-stage stochastic program (scenario MPC)</h2>
+<div class="facts">
+  <div><b>Information</b>Non-anticipative for the first decision only</div>
+  <div><b>Uses the trajectories</b>Directly, as scenarios</div>
+  <div><b>In our pipeline</b>Stochastic MILP reserve planner</div>
+</div>
+<p>Share the decision you must take now across all trajectories, and let every later decision depend on its own trajectory:</p>
+<div class="eq">\[
+\begin{aligned}
+\max_{a_1,\; a^\omega_{2:T}} \;& \sum_{\omega=1}^{M} p_\omega \Big[ r(\lambda^\omega_1, a_1) + \sum_{t=2}^{T} r(\lambda^\omega_t, a^\omega_t) + \Phi(s^\omega_{T+1}) \Big]\\
+\text{s.t. }\; & s^\omega_{t+1} = s^\omega_t + \Delta\big(\eta_c c^\omega_t - d^\omega_t/\eta_d\big), \quad s^\omega_2 = s_1 + \Delta(\eta_c c_1 - d_1/\eta_d) \quad \forall\omega.
+\end{aligned}
+\]</div>
+<p>Rewrite the value of a first decision to see the bias:</p>
+<div class="eq">\[ Q^{\text{2S}}(a_1) = \mathbb E\big[r(\lambda_1,a_1)\big] + \underbrace{\mathbb E_\omega\Big[\max_{a_{2:T}} \textstyle\sum_{t\ge 2} r(\lambda^\omega_t, a_t)\,\Big|\, s_2\Big]}_{\text{perfect foresight from } t=2} \;\ge\; \text{true value of } a_1. \]</div>
+<p>From step 2 on, each scenario sees its own future. The model overrates flexibility, because it believes it will always catch tomorrow's spike. Re-solving every interval helps, since only the first action is ever used, but the first action is still chosen against a clairvoyant future.</p>
+<div class="warn"><p><b>What we saw.</b> The 20-path stochastic MILP planned reserves alongside clairvoyant per-path energy. Energy looked very valuable, so it held too few reserves: 31.44&nbsp;M against 34.22&nbsp;M for the SDP.</p></div>
+<div class="verdict">
+  <div class="pro"><p class="label">Strengths</p><ul><li>Uses the trajectories as they are; no state model</li><li>Exact physics; any linear market rule fits</li></ul></div>
+  <div class="con"><p class="label">Limits</p><ul><li>Biased toward flexibility (anticipative recourse)</li><li>Size \(M\times T\) MILP per decision (~1 s for us)</li><li>No natural offer curve beyond the first step</li></ul></div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="method" id="m3">
+<h2><span class="tag">M3</span>Multi-stage stochastic program on a scenario tree</h2>
+<div class="facts">
+  <div><b>Information</b>Exact, on the tree</div>
+  <div><b>Uses the trajectories</b>Bundled into a tree</div>
+  <div><b>Typical size</b>\(b^{k}\) leaves for \(k\) branching stages</div>
+</div>
+<p>Build a tree from the trajectories: paths stay bundled in one node until they become distinguishable. Each node \(n\) has a stage \(t(n)\), a parent \(\mathrm{a}(n)\), a probability \(p_n\) and a price \(\lambda_n\). One decision per node:</p>
+<div class="eq">\[
+\begin{aligned}
+\max \;& \sum_{n} p_n\, r(\lambda_n, a_n) \;+\; \sum_{n\,\in\,\text{leaves}} p_n\, \Phi(s^{+}_n)\\
+\text{s.t. }\; & s^{+}_n = s^{+}_{\mathrm a(n)} + \Delta\Big(\eta_c c_n - \frac{d_n}{\eta_d}\Big), \quad \underline S \le s^{+}_n \le \overline S, \quad a_n \in \mathcal A.
+\end{aligned}
+\]</div>
+<p>Writing it per node <i>is</i> the non-anticipativity constraint: two scenarios through the same node must take the same action there.</p>
+<h3>Building the tree from trajectories</h3>
+<ol class="steps">
+  <li>Choose the branching stages, e.g. after 1, 2, 4, 8 and 16 h. Branching early matters most.</li>
+  <li>At each branching stage, cluster the trajectories in a node by their recent history (k-means or the forward selection of Heitsch &amp; Römisch). Each cluster becomes a child node with probability equal to its share.</li>
+  <li>Between branchings, use the cluster's mean path.</li>
+</ol>
+<p>Decomposition methods: nested Benders, or progressive hedging (solve each scenario separately, then penalise disagreement at shared nodes until they agree). The children of the root give the offer curve as points: one action per child price.</p>
+<div class="verdict">
+  <div class="pro"><p class="label">Strengths</p><ul><li>Exactly non-anticipative on the tree</li><li>Uses the joint paths, full memory</li><li>MILP: binaries and any market rule</li></ul></div>
+  <div class="con"><p class="label">Limits</p><ul><li>Size grows as \(b^k\); over 48 steps you can only branch a few times</li><li>Late stages become clairvoyant again (one path per leaf)</li><li>Results depend on how the tree is built</li></ul></div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="method" id="m4">
+<h2><span class="tag">M4</span>Stochastic dynamic programming on a Markov state</h2>
+<div class="facts">
+  <div><b>Information</b>Exact if prices are Markov in the state</div>
+  <div><b>Uses the trajectories</b>To fit transitions (or a model does)</div>
+  <div><b>In our pipeline</b>Water-value SDP</div>
+</div>
+<p>Suppose the price depends on the past only through a small state \(X_t\) with \(K\) values: \(\lambda_t = \lambda_t(X_t)\) and</p>
+<div class="eq">\[ \Pr(X_{t+1} = j \mid X_t = i, X_{t-1},\dots) = P_t(j \mid i). \]</div>
+<p>The pair \((s_t, X_t)\) is then a sufficient state, and the optimal value satisfies Bellman's equation, solved backwards from \(V_{T+1}(s, \cdot) = \Phi(s)\):</p>
+<div class="eq">\[ V_t(s, i) = \max_{a \in \mathcal A(s)} \Big\{ r\big(\lambda_t(i), a\big) + \sum_{j=1}^{K} P_t(j\mid i)\, V_{t+1}\big(s'(s,a),\, j\big) \Big\}, \qquad s'(s,a) = s + \Delta\Big(\eta_c c - \frac{d}{\eta_d}\Big). \]</div>
+<p>With \(s\) on a grid of \(N\) levels, a stage costs about \(K \cdot N \cdot N\) evaluations, plus \(K^2 N\) for the expectation. For us that's \(48 \times 11 \times 101^2 \approx 5\)M operations: milliseconds.</p>
+
+<h3>The water value and the offer curve</h3>
+<p>Let \(\bar V_{t+1}(s \mid i) = \sum_j P_t(j\mid i) V_{t+1}(s,j)\) be the expected value of energy left over, and \(\mu_{t+1}(s\mid i) = \partial \bar V_{t+1}/\partial s\) its slope, the <b>water value</b> (SGD per MWh stored). Comparing one marginal MWh of each action:</p>
+<div class="eq">\[ \text{discharge if } \lambda_t > \frac{\mu_{t+1}(s\mid i)}{\eta_d} + \kappa, \qquad \text{charge if } \lambda_t < \eta_c\, \mu_{t+1}(s\mid i) - \kappa, \qquad \text{idle in between.} \]</div>
+<p>\(\bar V\) is concave in \(s\) (relaxing the binary), so \(\mu\) falls as \(s\) rises, and the thresholds over the SoC range a tranche spans give a rising offer curve. With Markov prices \(\mu\) depends on \(i\) and so on \(\lambda_t\) itself: the curve is the optimal response \(q_t(\lambda) = \arg\max_a \{ r(\lambda, a) + \bar V_{t+1}(s'(s,a) \mid i(\lambda)) \}\) on a price grid.</p>
+
+<h3>Where the state comes from</h3>
+<ol class="steps">
+  <li><b>No state (stagewise independent).</b> \(P_t(j\mid i) = P_t(j)\). This throws away persistence and creates spreads that don't exist. Our test: the SDP expected 25&nbsp;M SGD a year where perfect foresight makes 16&nbsp;M.</li>
+  <li><b>From a model (what we do).</b> Equal-probability bins of each step's forecast quantiles. Transitions come from an AR(1) on normal scores, \(z_{t+1} = \rho z_t + \sqrt{1-\rho^2}\,\varepsilon\), discretised with Tauchen's method. This is exact if the copula's correlation is \(\rho^{|t-t'|}\).</li>
+  <li><b>From the trajectories (scenario lattice).</b> At each \(t\), cluster the values \(\{\lambda^\omega_t\}_\omega\) into \(K\) nodes \(\xi_{t,1},\dots,\xi_{t,K}\) and assign each path to its node \(i_t(\omega)\). Then count:
+    <div class="eq">\[ P_t(j\mid i) = \frac{\sum_\omega p_\omega\, \mathbf 1[i_t(\omega)=i,\ i_{t+1}(\omega)=j]}{\sum_\omega p_\omega\, \mathbf 1[i_t(\omega)=i]}. \]</div>
+    No parametric model: the transitions are whatever the trajectories do. This needs enough paths per cell (\(M \gg K^2\)), e.g. a few thousand copula samples.</li>
+  <li><b>More memory.</b> \(X_t = (\text{bin}_t, \text{bin}_{t-1})\) (order 2), or a slow level factor plus a fast one. That's \(K^p\) states: \(121\) for order 2, \(1331\) for order 3. Transitions come from Gaussian conditioning on the copula. It's worth it only if the forecast errors keep correlation beyond lag 1 that a single step doesn't explain (their partial autocorrelation).</li>
+</ol>
+<div class="verdict">
+  <div class="pro"><p class="label">Strengths</p><ul><li>Exactly non-anticipative given the state</li><li>Gives the water value and a real offer curve</li><li>Fast for one battery (1-D SoC)</li></ul></div>
+  <div class="con"><p class="label">Limits</p><ul><li>Only as good as the Markov assumption</li><li>Grid grows with every extra state dimension</li></ul></div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="method" id="m5">
+<h2><span class="tag">M5</span>SDDP (stochastic dual dynamic programming)</h2>
+<div class="facts">
+  <div><b>Information</b>Stagewise independent, or Markov (MC-SDDP)</div>
+  <div><b>Uses the trajectories</b>Through a lattice, as in M4</div>
+  <div><b>Built for</b>Many storage states (hydro cascades)</div>
+</div>
+<p>Same Bellman equation as M4, but \(V_{t+1}(\cdot, j)\) is not tabulated on a grid. It is bounded from above by cuts (planes). A concave function is the minimum of its tangents:</p>
+<div class="eq">\[ V_{t+1}(s, j) \;\le\; \min_{k} \big\{ \alpha_{t+1,j,k} + \beta_{t+1,j,k}\, s \big\}. \]</div>
+<p>Each stage is then an LP (binary relaxed):</p>
+<div class="eq">\[ \hat V_t(s, i) = \max_{a,\,\theta}\; r(\lambda_t(i), a) + \sum_j P_t(j\mid i)\,\theta_j \quad \text{s.t.}\quad \theta_j \le \alpha_{t+1,j,k} + \beta_{t+1,j,k}\, s'(s,a)\ \ \forall k. \]</div>
+<ol class="steps">
+  <li><b>Forward pass:</b> simulate price paths through the lattice and the current policy, and record the SoC visited.</li>
+  <li><b>Backward pass:</b> at those SoC values, solve the stage LPs. The dual of the SoC balance gives the slope \(\beta\), which is the water value. Add the cut.</li>
+  <li>Stop when the upper bound (the first stage's value) meets the lower bound (the mean simulated profit).</li>
+</ol>
+<div class="verdict">
+  <div class="pro"><p class="label">Strengths</p><ul><li>No SoC grid; scales to many batteries or reservoirs</li><li>Gives both bounds</li></ul></div>
+  <div class="con"><p class="label">Limits</p><ul><li>Needs convexity (LP stages): binaries and SoC-dependent rules must be relaxed</li><li>Same Markov requirement on prices as M4</li><li>For one battery a 101-level grid is exact and cheaper</li></ul></div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="method" id="m6">
+<h2><span class="tag">M6</span>Least-squares Monte Carlo (regression DP)</h2>
+<div class="facts">
+  <div><b>Information</b>Whatever features you regress on</div>
+  <div><b>Uses the trajectories</b>Directly, no discretisation of price</div>
+  <div><b>Origin</b>American options, gas storage valuation</div>
+</div>
+<p>Keep the SoC grid and the Bellman recursion, but estimate the conditional expectation by regression across many simulated paths instead of a transition matrix. Choose features \(Z_t\) built from information known at \(t\), e.g. \(Z_t = (\lambda_t, \lambda_{t-1}, \text{forecast mean of the next 4 h})\), and basis functions \(\phi_1,\dots,\phi_L\) such as polynomials or splines.</p>
+<p>Backward over \(t\), for each grid level \(s'\):</p>
+<div class="eq">\[
+\begin{aligned}
+\beta_t(s') &= \arg\min_{\beta} \sum_{\omega=1}^{M} \Big( \hat V_{t+1}(s', \omega) - \beta^{\top}\phi(Z^\omega_t) \Big)^2, \qquad \hat C_t(s', z) = \beta_t(s')^{\top}\phi(z) \approx \mathbb E\big[V_{t+1}(s') \mid Z_t = z\big],\\
+\hat V_t(s, \omega) &= \max_{a \in \mathcal A(s)} \Big\{ r(\lambda^\omega_t, a) + \hat C_t\big(s'(s,a),\, Z^\omega_t\big) \Big\}.
+\end{aligned}
+\]</div>
+<p>The Longstaff–Schwartz variant regresses the cash actually earned along each path by following the decisions, instead of \(\hat V_{t+1}\). That has less upward bias. Then judge the policy honestly on a fresh set of paths. The offer curve is \(q_t(\lambda)\), obtained by maximising with \(z = (\lambda, \dots)\).</p>
+<div class="key"><p><b>What it changes.</b> The regression <i>is</i> a conditional expectation given \(Z_t\), so this is still DP with a Markov state. The state is \(Z_t\), continuous and chosen by you, and its transitions are learnt from the paths without binning. It is the general version of the scenario lattice.</p></div>
+<div class="verdict">
+  <div class="pro"><p class="label">Strengths</p><ul><li>Works with any trajectory generator, no Markov model of prices</li><li>Several features cost no more than one</li></ul></div>
+  <div class="con"><p class="label">Limits</p><ul><li>Regression noise; needs \(M\) in the thousands per issue</li><li>Wrong features give a wrong value</li><li>In-sample estimate is optimistic; out-of-sample run needed</li></ul></div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="method" id="m7">
+<h2><span class="tag">M7</span>Direct policy search</h2>
+<div class="facts">
+  <div><b>Information</b>Non-anticipative by construction</div>
+  <div><b>Uses the trajectories</b>To simulate and score a policy</div>
+  <div><b>Includes</b>Threshold rules, tuned margins, RL</div>
+</div>
+<p>Fix the shape of the policy and tune its parameters \(\theta\) by simulation. For example, discharge above a price threshold and charge below another, both depending on SoC and features:</p>
+<div class="eq">\[ \pi_\theta(s, Z_t, \lambda_t) = \begin{cases} \text{discharge} & \lambda_t \ge g_\theta(s, Z_t)\\ \text{charge} & \lambda_t \le h_\theta(s, Z_t)\\ \text{idle} & \text{otherwise} \end{cases}
+\qquad
+\theta^\star = \arg\max_\theta \frac{1}{M}\sum_{\omega=1}^M \sum_{t=1}^{T} r\big(\lambda^\omega_t, \pi_\theta(s^\omega_t, Z^\omega_t, \lambda^\omega_t)\big),\]</div>
+<p>with \(s^\omega_t\) simulated along each path. The policy only sees \(Z_t\) and \(\lambda_t\), so it can't cheat, and its score on fresh paths is an honest lower bound on \(V^\star\). Optimisers: CMA-ES, Bayesian optimisation, or gradients through a smooth simulator. Reinforcement learning is this with a neural network as the policy.</p>
+<div class="verdict">
+  <div class="pro"><p class="label">Strengths</p><ul><li>No state model, no anticipation</li><li>Tests the real offer format and market rules in the simulator</li></ul></div>
+  <div class="con"><p class="label">Limits</p><ul><li>Capped by the policy family</li><li>Slow, noisy optimisation; risk of overfitting the sample</li><li>Best for tuning a few knobs on top of M4, not as the engine</li></ul></div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="method" id="m8">
+<h2><span class="tag">M8</span>Information-relaxation duality (how far from optimal?)</h2>
+<div class="facts">
+  <div><b>Role</b>Upper bound, diagnostic only</div>
+  <div><b>Uses the trajectories</b>Perfect foresight with a penalty</div>
+  <div><b>Pairs with</b>Any value estimate from M4–M6</div>
+</div>
+<p>Perfect foresight \(V^{\text{WS}}\) is a loose upper bound. Tighten it by charging the clairvoyant solver for using future information. For any value approximation \(W_{t+1}\) (e.g. from M4), define the penalty</p>
+<div class="eq">\[ z_t(a) = W_{t+1}\big(s_{t+1}, \lambda_{1:t+1}\big) - \mathbb E\big[W_{t+1}(s_{t+1}, \lambda_{1:t+1}) \,\big|\, \mathcal F_t\big]. \]</div>
+<p>It averages to zero for any non-anticipative policy, so</p>
+<div class="eq">\[ V^\star \;\le\; \mathbb E_\omega\Big[ \max_{a} \sum_t \big( r(\lambda^\omega_t, a_t) - z^\omega_t(a) \big) + \Phi(s_{T+1}) \Big]. \]</div>
+<p>With \(z = 0\) this is perfect foresight. With a good \(W\) the bound comes close to \(V^\star\). The distance between this bound and a policy's simulated profit says how much any method could still gain.</p>
+</section>
+
+<!-- ============================================================ -->
+<section class="method" id="m9">
+<h2><span class="tag">M9</span>Continuous price state (fitted value iteration)</h2>
+<div class="facts">
+  <div><b>Information</b>Exact given the state; the state is continuous</div>
+  <div><b>Uses the trajectories</b>Through a pluggable expectation</div>
+  <div><b>Relation</b>Generalises M4; M6 is one of its expectation sources</div>
+</div>
+<p>M4 bins the price state. Here the state is a continuous score \(z\) (or a few of them). The SoC keeps its grid, because the value is concave and piecewise linear in \(s\) and 101 levels are already near exact. The value is a function of \(z\), stored at nodes \(z_1 < \dots < z_J\) and interpolated between them:</p>
+<div class="eq">\[ V_t(s, z) \;\approx\; \sum_{l=1}^{J} V_t(s, z_l)\, B_l(z), \qquad B_l = \text{hat function of node } l \ \ (\textstyle\sum_l B_l \equiv 1,\ B_l \ge 0). \]</div>
+<p>The price at a score comes from the forecast's own quantile function, \(\lambda_t(z) = F_t^{-1}(\Phi(z))\), so the marginal of every interval is exactly the forecast's. Bellman at the nodes:</p>
+<div class="eq">\[ V_t(s, z_j) = \max_{a\in\mathcal A(s)} \Big\{ r\big(\lambda_t(z_j), a\big) + C_t\big(s'(s,a), z_j\big) \Big\}, \qquad C_t(s', z) = \mathbb E\big[V_{t+1}(s', Z_{t+1}) \,\big|\, Z_t = z\big]. \]</div>
+
+<h3>The expectation is the only part that needs a model</h3>
+<p>Interpolation makes \(C_t\) a weighted sum of node values, \(C_t(s', z_j) = \sum_l T_t[j, l]\, V_{t+1}(s', z_l)\), with \(T_t[j,l] = \mathbb E[B_l(Z_{t+1}) \mid Z_t = z_j]\). Whatever supplies \(T_t\), the solver is unchanged:</p>
+<ol class="steps">
+  <li><b>From a model (closed form).</b> Gaussian AR(1) on scores: \(Z_{t+1} \mid z \sim \mathcal N(\rho z, 1-\rho^2)\). Each hat is a second difference of ramps, so with \(G(x) = \mathbb E[(Z_{t+1}-x)^+]\), known in closed form, \(T_t[j,l] = \big(G(z_{l-1}) - 2G(z_l) + G(z_{l+1})\big)/h\). No sampling, and the rows are exact probabilities.</li>
+  <li><b>From trajectories, nonparametric.</b> Kernel regression on the paths: \(T_t[j,l] = \sum_\omega K_h(Z^\omega_t - z_j)\, B_l(Z^\omega_{t+1}) \,/\, \sum_\omega K_h(Z^\omega_t - z_j)\). Rows stay non-negative and sum to 1, and there's no AR(1).</li>
+  <li><b>From trajectories, by least squares</b> (M6): polynomial regression of \(V_{t+1}(s', Z^\omega_{t+1})\) on \(\phi(Z^\omega_t)\). It's more flexible, but the weights can go negative, so concavity in \(s\) is no longer guaranteed.</li>
+</ol>
+<div class="key">
+<p class="label">Why linear interpolation</p>
+<p>With hat functions, \(T_t\) is a stochastic matrix (rows non-negative, summing to 1). So a continuous-state DP with linear interpolation runs on exactly the same code as a Markov lattice. The state prices become exact quantiles at the nodes instead of bin means, and the transitions are exact hat expectations instead of Tauchen bins. A mix of concave functions is concave, so V stays concave in SoC and the water value keeps falling.</p>
+</div>
+<p>Node prices: use the local mean \(\tilde\lambda_{t,l} = \mathbb E[\lambda_t(Z) B_l(Z)] / \mathbb E[B_l(Z)]\), so that \(\sum_l w_l \tilde\lambda_{t,l} = \mathbb E[\lambda_t]\) exactly (Fact 1). The linear spreading adds a little variance per step, about \(h^2/6\) for node spacing \(h\). Taking it out of the AR(1) noise keeps the score's distribution stable across stages.</p>
+<div class="verdict">
+  <div class="pro"><p class="label">Strengths</p><ul><li>No binning error; more nodes cost little (\(J \cdot N^2\) per stage)</li><li>The dependence model is a plug-in, swapped for trajectories when they're good</li><li>Extends to 2–3 coordinates (energy score, reserve factor)</li></ul></div>
+  <div class="con"><p class="label">Limits</p><ul><li>Grows as \(J^d\) with the state dimension (tensor nodes)</li><li>Trajectory-based expectations need thousands of paths</li></ul></div>
+</div>
+<p class="label">Related work</p>
+<p>Judd, <i>Numerical Methods in Economics</i> (1998), and Rust, “Numerical dynamic programming in economics”, <i>Handbook of Computational Economics</i> (1996), on interpolation and quadrature in DP. Zheng, Jaworski &amp; Xu, “Arbitraging variable efficiency energy storage using analytical stochastic dynamic programming”, <i>IEEE Trans. Power Systems</i> (2022): the water-value recursion with price integrated in closed form. Jiang &amp; Powell, “Optimal hour-ahead bidding in the real-time electricity market with battery storage using approximate dynamic programming”, <i>INFORMS J. Computing</i> (2015): learnt concave value functions for battery bidding.</p>
+</section>
+
+<!-- ============================================================ -->
+<h2 id="compare">§4 Side by side</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th></th><th>Method</th><th>Non-anticipative</th><th>Memory of prices</th><th>Offer curve</th><th>Cost per issue (our size)</th><th>Exact physics</th></tr></thead>
+  <tbody>
+    <tr><td class="m">M1</td><td>Deterministic MPC</td><td class="yes">Yes (no recourse)</td><td>None, mean only</td><td>Step at planned MW</td><td class="num">ms (MILP)</td><td class="yes">Yes</td></tr>
+    <tr><td class="m">M2</td><td>Two-stage stochastic</td><td class="no">First step only</td><td>Full paths</td><td>First step only</td><td class="num">~1 s (20 paths, MILP)</td><td class="yes">Yes</td></tr>
+    <tr><td class="m">M3</td><td>Multi-stage tree</td><td class="yes">On the tree</td><td>Full, until leaves</td><td>Points at root children</td><td class="num">s–min (grows as \(b^k\))</td><td class="yes">Yes</td></tr>
+    <tr><td class="m">M4</td><td>SDP, Markov lattice</td><td class="yes">Yes</td><td>The state (\(K^p\))</td><td class="yes">Full curve</td><td class="num">ms (\(K=11\)) to s (\(K^3\))</td><td>Grid; any rule</td></tr>
+    <tr><td class="m">M5</td><td>SDDP</td><td class="yes">Yes</td><td>The state</td><td>From cuts</td><td class="num">s–min</td><td class="no">LP only</td></tr>
+    <tr><td class="m">M6</td><td>LSMC</td><td class="yes">Yes (out of sample)</td><td>Features \(Z_t\)</td><td class="yes">Full curve</td><td class="num">~1 s (\(M\approx 2000\), numba)</td><td>Grid; any rule</td></tr>
+    <tr><td class="m">M7</td><td>Policy search</td><td class="yes">Yes</td><td>Features \(Z_t\)</td><td>The policy itself</td><td class="num">Offline tuning</td><td class="yes">Yes (simulator)</td></tr>
+    <tr><td class="m">M9</td><td>Continuous state</td><td class="yes">Yes</td><td>Score \(z\) (continuous)</td><td class="yes">Full curve</td><td class="num">ms (\(J\approx 21\))</td><td>Grid; any rule</td></tr>
+    <tr><td class="m">M8</td><td>Duality bound</td><td>Not a policy</td><td>Full</td><td>None</td><td class="num">\(M\) MILPs</td><td class="yes">Yes</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Cost figures for M1, M2 and M4 at \(K=11\) are measured in our pipeline. The others are order-of-magnitude estimates for \(T=48\) and a 101-level SoC grid.</p>
+
+<!-- ============================================================ -->
+<h2 id="ours">§5 Where our pipeline sits</h2>
+<p>We run M4 inside an M1-style loop. Every 30 minutes a new forecast arrives, an SDP is solved on an 11-state lattice built from that forecast (route 2 in M4), and only the next offer curve is used. The real new information comes from the next forecast. The lattice inside one issue only has to describe how uncertainty resolves over the coming hours, which is what sets the water value's shape and the value of waiting.</p>
+<div class="box">
+<p class="label">Natural next steps within this framework</p>
+<ol class="steps">
+  <li><b>Check the Markov assumption</b>: compare the partial autocorrelation of forecast errors at lags 2–3 with zero. If it is near zero, the order-1 lattice is the right model.</li>
+  <li><b>Continuous price state</b> (M9): exact node prices and hat transitions on the same solver, with the expectation as a plug-in (in progress).</li>
+  <li><b>Scenario lattice from trajectories</b> (M4, route 3): fit \(P_t(j\mid i)\) by counting on a few thousand copula paths instead of using Tauchen. Same SDP code, transitions from the joint model itself.</li>
+  <li><b>Order-2 state</b> if step 1 shows memory: 121 energy states, roughly 3 h per year with reserves.</li>
+  <li><b>LSMC as a cross-check</b> (M6): an independent estimate of the continuation value from raw paths.</li>
+  <li><b>Duality bound</b> (M8): tells us how much of the gap to perfect foresight is reachable at all.</li>
+</ol>
+</div>
+
+<!-- ================================ PART 2 ================================ -->
+<header class="top part2head" id="part2">
+  <div class="eyebrow">Part 2 · Reserves and regulation</div>
+  <h1>Adding Ancillary Services</h1>
+  <p class="lede">Same battery, same information problem, three more products. This part covers only what changes: the problem, the facts, the information state, and each method.</p>
+</header>
+
+<h2 id="p2-changes">§7 What changes, in one list</h2>
+<ol class="steps">
+  <li><b>The price becomes a vector.</b> \(\boldsymbol\lambda_t = (\lambda^{E}_t, \lambda^{\text{reg}}_t, \lambda^{\text{pri}}_t, \lambda^{\text{con}}_t)\). Trajectories are now joint paths of four prices.</li>
+  <li><b>The action becomes a vector.</b> Energy \((c_t, d_t)\) plus reserves held \(x^{p}_t \ge 0\) MW for \(p \in \{\text{reg}, \text{pri}, \text{con}\}\).</li>
+  <li><b>The state does not change.</b> It is still the SoC \(s_t\), one number. Reserves don't move the SoC (except regulation energy), but they use up power and SoC headroom.</li>
+  <li><b>New coupling constraints.</b> Per-class power limits (RC383) and SoC checks from the start SoC (RC386) tie energy and reserves together.</li>
+  <li><b>The information state must cover four prices.</b> This is the real cost: a lattice over four prices grows as \(K^4\).</li>
+  <li><b>Offers are separate curves per product.</b> Up to 5 pairs each, and the engine co-optimises and cuts to the SoC. You can't submit a joint response to all four prices.</li>
+  <li><b>Price-taking stops being plausible.</b> 100 MW against a 108 MW regulation requirement.</li>
+</ol>
+
+<h2 id="p2-problem">§8 The extended problem</h2>
+<h3>Cash</h3>
+<p>Reserves are paid for availability: price × MW scheduled. Regulation also moves real energy around the schedule (AGC). We assume shares \(\alpha^{\uparrow} = \alpha^{\downarrow} = 0.05\) of the regulation MW × interval, settled at USEP.</p>
+<div class="eq">\[
+r(\boldsymbol\lambda_t, a_t) = \underbrace{\lambda^{E}_t (d_t - c_t)\Delta - \kappa (c_t + d_t)\Delta}_{\text{energy, as in Part 1}}
+\;+\; \underbrace{\sum_{p} \lambda^{p}_t\, x^{p}_t\, \Delta}_{\text{availability}}
+\;+\; \underbrace{\big(\lambda^{E}_t(\alpha^{\uparrow} - \alpha^{\downarrow}) - \kappa(\alpha^{\uparrow} + \alpha^{\downarrow})\big)\, x^{\text{reg}}_t\, \Delta}_{\text{regulation energy}}
+\]</div>
+<p>Activations of primary and contingency reserve are rare (0.2% of periods in 2025), and their energy is paid as ordinary energy. They are not modelled.</p>
+
+<h3>SoC</h3>
+<div class="eq">\[ s_{t+1} = s_t + \Delta\Big(\eta_c\,(c_t + \alpha^{\downarrow} x^{\text{reg}}_t) - \frac{d_t + \alpha^{\uparrow} x^{\text{reg}}_t}{\eta_d}\Big). \]</div>
+
+<h3>Power per reserve class (RC383)</h3>
+<p>Charging counts negative, so a charging battery can hold more raise reserve than \(\overline P\):</p>
+<div class="eq">\[
+\begin{aligned}
+d_t - c_t + x^{\text{reg}}_t + x^{\text{pri}}_t &\le \overline P, &\qquad d_t - c_t + x^{\text{reg}}_t + x^{\text{con}}_t &\le \overline P,\\
+c_t - d_t + x^{\text{reg}}_t &\le \overline P.
+\end{aligned}
+\]</div>
+
+<h3>SoC checks from the start SoC (RC386)</h3>
+<p>Each check \(k\) says how many hours each product must be sustained (\(h_{pk}\), with \(h_{Ek}\) for the energy schedule). The energy drawn must fit above \(\underline S\), and the energy added below \(\overline S\):</p>
+<div class="eq">\[
+\frac{d_t h_{Ek} + \sum_p x^{p}_t h_{pk}}{\eta_d} - c_t\, h_{Ek}\, \eta_c \;\le\; s_t - \underline S \quad (k = \text{C1, C2, C3}),
+\qquad
+(c_t + x^{\text{reg}}_t)\,\tfrac12\,\eta_c - \frac{d_t}{2\eta_d} \;\le\; \overline S - s_t \quad (\text{C4}).
+\]</div>
+<div class="tablewrap" style="max-width:560px">
+<table style="min-width:480px">
+  <thead><tr><th>Check</th><th>Energy</th><th>Reg</th><th>Primary</th><th>Contingency</th></tr></thead>
+  <tbody class="num">
+    <tr><td>C1 discharge</td><td>½ h</td><td>½ h</td><td>⅙ h</td><td>⅓ h</td></tr>
+    <tr><td>C2 discharge</td><td>⅙ h</td><td>⅙ h</td><td>⅙ h</td><td>–</td></tr>
+    <tr><td>C3 discharge</td><td>½ h</td><td>½ h</td><td>–</td><td>½ h</td></tr>
+    <tr><td>C4 charge</td><td>½ h</td><td>½ h</td><td>–</td><td>–</td></tr>
+  </tbody>
+</table>
+</div>
+<p>For a given start SoC everything is <b>linear in the action</b>, so the feasible actions \(\mathcal A(s)\) form a polytope. Every method keeps its Part 1 form with a bigger action and more constraints.</p>
+<div class="box">
+<p class="label">Worked consequence: regulation near a full battery</p>
+<p>With no energy schedule, C4 reads \(x^{\text{reg}} \cdot \tfrac12 \cdot \eta_c \le \overline S - s\), so \(x^{\text{reg}} \le 2.17\,(100 - s)\) MW for our battery (\(\eta_c = 0.922\)). At 90 MWh at most 21.7 MW of regulation fits, at 95 MWh 10.8 MW, and at 100 MWh none. A policy that sits near full gives up regulation, and the value function has to know that.</p>
+</div>
+
+<h2 id="p2-facts">§9 The facts, revisited</h2>
+<h3>Fact 1 holds per product, and conditionally</h3>
+<p>Availability pay is linear in each reserve price. For reserve MW fixed in advance, only \(\mathbb E[\lambda^p_t]\) matters. Given a price state \(r\), only \(\mathbb E[\lambda^p_t \mid r]\) matters:</p>
+<div class="eq">\[ \mathbb E\Big[\sum_p \lambda^{p}_t x^{p}_t \,\Big|\, r\Big] = \sum_p \underbrace{\mathbb E[\lambda^{p}_t \mid r]}_{\pi^{p}_t(r)}\, x^{p}_t. \]</div>
+<p>So the right point value is the <b>mean</b>, never the median. Reserve prices are right-skewed: the realised mean is about 14% above the forecast median for every product. Using the median undervalues every reserve MW. Our year: median 34.22&nbsp;M, mean 34.49&nbsp;M.</p>
+
+<h3>Reserves offered at 0 are open loop in their own price</h3>
+<p>We offer reserves at 0 SGD/MW (price-taking), with the MW fixed at gate closure. That decision can't react to \(\lambda^p_t\): it is open loop in the reserve price, even though the energy curve stays closed loop in \(\lambda^E_t\). A closed-loop reserve offer would be a rising curve \(x^p = g^p_t(\lambda^p)\), priced at its opportunity cost:</p>
+<div class="eq">\[ \text{offer price}^{p} \;=\; \underbrace{\text{energy margin given up}}_{\text{power used by } x^p} \;+\; \underbrace{\text{value of SoC headroom held}}_{\mu_{t+1}\ \text{over the RC386 band}} \;+\; \text{expected activation cost}. \]</div>
+<p>The market only takes one 1-D curve per product. The engine then co-optimises the split and cuts to the SoC. The joint response \(a_t(\lambda^E, \lambda^{\text{reg}}, \lambda^{\text{pri}}, \lambda^{\text{con}})\) can only be approximated by four separate curves.</p>
+
+<h2 id="p2-state">§10 The information state in four dimensions</h2>
+<p>Independent \(K\)-state chains per price give \(K^4\) joint states: \(11^4 = 14{,}641\). That's 270 times our energy lattice, and too slow per issue. Reserve forecast errors are strongly related, so a <b>common factor</b> carries most of the information. In normal scores:</p>
+<div class="eq">\[
+z^{p}_t = \ell_p\, F_t + \sqrt{1 - \ell_p^2}\; e^{p}_t,
+\qquad
+F_{t+1} = \rho_F\, F_t + \sqrt{1-\rho_F^2}\;\varepsilon_{t+1},
+\qquad e^p_t, \varepsilon_t \sim \mathcal N(0,1)\ \text{independent}.
+\]</div>
+<p>This implies \(\operatorname{corr}(z^p, z^q) = \ell_p \ell_q\). With loadings \(\ell = (0.63, 0.45, 0.78)\) for (reg, pri, con) it reproduces the observed error correlations: \(0.63 \times 0.45 = 0.28\), \(0.63 \times 0.78 = 0.49\), \(0.45 \times 0.78 = 0.35\). Then:</p>
+<ol class="steps">
+  <li>Cut \(F\) into \(R = 5\) equal-probability bins. Transitions \(P^R(r' \mid r)\) come from the AR(1) with \(\rho_F = 0.75\).</li>
+  <li>The state price is the conditional mean \(\pi^p_t(r) = \mathbb E[\lambda^p_t \mid F_t \in \text{bin } r]\), integrated over \(e^p\) by Gauss–Hermite quadrature. By Fact 1 this is exact for the revenue, not an approximation.</li>
+  <li>The joint state is \((k, r)\): \(11 \times 5 = 55\) states, with \(P\big((k', r') \mid (k, r)\big) = P^E(k' \mid k)\, P^R(r' \mid r)\).</li>
+</ol>
+<p>The product form assumes the energy and reserve chains are independent. The observed correlation between energy and reserve errors is 0.19–0.38, and we ignore it. A VAR(1) on \((z^E, F)\) would couple the two chains without adding states.</p>
+
+<h2 id="p2-methods">§11 Method by method: what changes</h2>
+
+<section class="method" id="p2-m1">
+<h2><span class="tag">M1</span>Deterministic MPC</h2>
+<ul>
+  <li>The MILP gains the \(x^p_t\) variables and the RC383/RC386 rows. One MILP per decision is still fast.</li>
+  <li>It is still open loop in every price. By Fact 1 it should use mean reserve prices.</li>
+  <li><b>Firm reserves</b> option: no credit from the opposite energy flow. Raise reserves must fit with \(d_t + x \le \overline P\), as if the battery weren't charging. This is safer, but holds less.</li>
+</ul>
+<p class="label">Ours: self-schedule 33.42&nbsp;M (non-firm). As the reserve planner inside the water value: 32.99&nbsp;M.</p>
+</section>
+
+<section class="method" id="p2-m2">
+<h2><span class="tag">M2</span>Two-stage stochastic program</h2>
+<p>The natural split: reserves are the first stage, shared by every path; energy is the recourse, chosen per path.</p>
+<div class="eq">\[ \max_{x_{1:T}} \;\sum_\omega p_\omega \Big[ \sum_t \sum_p \lambda^{p,\omega}_t x^p_t \Delta \;+\; \max_{c^\omega, d^\omega} \sum_t \big(\lambda^{E,\omega}_t (d^\omega_t - c^\omega_t) - \kappa(c^\omega_t + d^\omega_t)\big)\Delta \Big] \quad \text{s.t. RC383/386 per path.} \]</div>
+<p>Two biases, pulling in opposite directions:</p>
+<ul>
+  <li><b>Energy is clairvoyant per path</b>, so it looks more valuable than it is. The plan gives too much capacity to energy and holds too few reserves.</li>
+  <li><b>Reserves for later hours are shared by all paths</b>, so they can't adapt as prices unfold. They look less valuable than they are, adding to the first bias.</li>
+</ul>
+<div class="warn"><p><b>What we saw.</b> The relaxed 20-path version held too few reserves: 31.44&nbsp;M, against 34.22&nbsp;M for the SDP.</p></div>
+</section>
+
+<section class="method" id="p2-m3">
+<h2><span class="tag">M3</span>Multi-stage tree</h2>
+<p>Unchanged in form: one \((c_n, d_n, x_n)\) per node, plus RC383/386 rows per node. The tree must now be built on four-price paths. Clustering in four dimensions needs more paths per node, and the tree grows quickly.</p>
+</section>
+
+<section class="method" id="p2-m4">
+<h2><span class="tag">M4</span>SDP on a Markov state</h2>
+<p>The stage problem becomes a choice of next SoC <i>and</i> a reserve mix. Split it in two. For a move \(s \to s'\), the energy flow is set, and the reserves that still fit form a polytope \(\mathcal X(s, s')\). Availability pay is linear in \(x\), so the best mix sits at a <b>vertex</b>:</p>
+<div class="eq">\[ R_t(s, s' \mid r) \;=\; \max_{x \in \mathcal X(s,s')} \sum_p \pi^{p}_t(r)\, x^p\, \Delta \;=\; \max_{v\, \in\, \operatorname{vert}\mathcal X(s,s')} \pi_t(r)^{\top} x_v\, \Delta. \]</div>
+<p>The vertices depend only on the grid and the rules, so they are computed once per grid. The reward for each state is then a small max over precomputed corners. Bellman over the joint state:</p>
+<div class="eq">\[ V_t(s, k, r) = \max_{s'} \Big\{ \lambda^{E}_t(k)\, g(s, s') - w(s, s') + R_t(s, s' \mid r) + \sum_{k', r'} P^E(k'\mid k)\, P^R(r'\mid r)\, V_{t+1}(s', k', r') \Big\}, \]</div>
+<p>with \(g\) the MWh sold on the move and \(w\) its wear. The cost per stage is \(K \cdot R \cdot N^2\). With numba that's 58&nbsp;ms per issue for 55 states.</p>
+<p><b>At gate closure</b>, reserves go in at 0 before \(\lambda^p_t\) is known. So the mix is chosen in expectation over the reserve state, \(x^\star = \arg\max_x \mathbb E_r[\cdot]\), and the energy curve is the optimal response restricted to actions that still fit beside \(x^\star\). The backward pass lets \(x\) depend on \(r\), which is slightly optimistic compared with offering at 0.</p>
+<p class="label">Ours: point mean 34.49&nbsp;M, 55-state reserve lattice 34.53&nbsp;M</p>
+</section>
+
+<section class="method" id="p2-m5">
+<h2><span class="tag">M5</span>SDDP</h2>
+<p>Reserves fit naturally here. All of RC383/386 is linear in \((s, a)\), so each stage stays an LP with \(x\) as ordinary variables, and no vertex enumeration is needed. The cuts stay one-dimensional in \(s\). Two cautions:</p>
+<ul>
+  <li>The price state is still a lattice, so the four-dimensional problem of §10 is unchanged.</li>
+  <li>Relaxing the binary allows charging and discharging at once. Check that this doesn't create fake headroom in the rules.</li>
+</ul>
+</section>
+
+<section class="method" id="p2-m6">
+<h2><span class="tag">M6</span>Least-squares Monte Carlo</h2>
+<p>This gains the most from more products. A lattice grows as \(K^{\text{prices}}\), while a regression grows with the number of features. Regress the continuation on \(Z_t = (\lambda^E_t, \lambda^{\text{reg}}_t, \lambda^{\text{pri}}_t, \lambda^{\text{con}}_t, \dots)\) straight from the four-price paths. That needs no factor model and no independence assumption between energy and reserves. The stage max uses the same vertex trick, with \(\hat C_t(s', Z_t)\) in place of the lattice expectation.</p>
+</section>
+
+<section class="method" id="p2-m7">
+<h2><span class="tag">M7</span>Policy search</h2>
+<p>A good fit for the knobs the SDP leaves open: reserve caps by SoC band, how far below full to stay when regulation pays, and margins on gate-closure SoC. Our behaviour check found the water value at SoC ≥ 80&nbsp;MWh 57% of the time (self-schedule 21%), where C4 squeezes regulation. A tuned rule on top of M4 could test that directly in the simulator.</p>
+</section>
+
+<section class="method" id="p2-m8">
+<h2><span class="tag">M8</span>Duality bound</h2>
+<p>Unchanged: perfect foresight in all four prices, with a penalty built from the value function. Perfect foresight with reserves is 42.66&nbsp;M, so the bound tells how much of the 8&nbsp;M gap is reachable.</p>
+</section>
+
+<h2 id="p2-impact">§12 Price impact in reserve markets</h2>
+<p>For energy (about 7&nbsp;GW of demand), a 100&nbsp;MW battery is close to a price taker. Reserves are another matter:</p>
+<div class="tablewrap" style="max-width:600px">
+<table style="min-width:520px">
+  <thead><tr><th>Product (NEMS 2025)</th><th>Requirement</th><th>Our cap today</th><th>2025 spend</th></tr></thead>
+  <tbody class="num">
+    <tr><td>Regulation</td><td>108 MW</td><td>100 MW</td><td>19.1 M SGD</td></tr>
+    <tr><td>Primary reserve</td><td>~175 MW</td><td>100 MW</td><td rowspan="2">50.9 M SGD (reserves)</td></tr>
+    <tr><td>Contingency reserve</td><td>~411 MW</td><td>100 MW</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Model it as a residual supply curve for each product. The price is set by the rest of the market given our MW:</p>
+<div class="eq">\[ \lambda^{p}_t = \lambda^{p,0}_t - \beta^p_t\, x^p_t \quad\Longrightarrow\quad \text{pay} = \lambda^{p,0}_t x^p_t - \beta^p_t (x^p_t)^2 \quad \text{(concave)}. \]</div>
+<ul>
+  <li><b>MILP (M1–M3):</b> a concave piecewise-linear objective needs no binaries. Easy.</li>
+  <li><b>SDP (M4):</b> pay is no longer linear in \(x\), so the best mix can be inside the polytope and the vertex trick breaks. Fix it by splitting each product into slices, each with its own price, which brings back linearity with more corners.</li>
+  <li><b>The price state</b> stays on \(\lambda^{p,0}\), the price without us. Historical prices are exactly that, so forecasts and chains don't change.</li>
+  <li><b>The offer curve matters again.</b> With impact, a reserve curve chooses which price clears (supply function theory), not just whether to take it.</li>
+  <li><b>Crudest version:</b> cap \(x^p\) at a share of the requirement. Estimating \(\beta^p_t\) properly needs the other participants' offers.</li>
+</ul>
+<div class="warn"><p>All the ancillary results here assume awards up to 100&nbsp;MW per product at the forecast price. That overstates reserve revenue, probably by more than any difference between methods.</p></div>
+
+<h2 id="p2-ours">§13 Where our pipeline sits</h2>
+<div class="tablewrap" style="max-width:640px">
+<table style="min-width:560px">
+  <thead><tr><th>Run (12 months, half-hourly, NEMS rules)</th><th>Method</th><th>Profit (M SGD)</th></tr></thead>
+  <tbody class="num">
+    <tr><td>Perfect foresight</td><td>Upper bound</td><td>42.66</td></tr>
+    <tr><td>Water value, 55-state reserve lattice</td><td>M4</td><td><b>34.53</b></td></tr>
+    <tr><td>Water value, mean reserve prices</td><td>M4</td><td>34.49</td></tr>
+    <tr><td>Water value, median reserve prices</td><td>M4</td><td>34.22</td></tr>
+    <tr><td>Self-schedule</td><td>M1</td><td>33.42</td></tr>
+    <tr><td>Water value, MILP reserve planner</td><td>M1 + M4</td><td>32.99</td></tr>
+    <tr><td>Water value, stochastic MILP planner (relaxed, 20 paths)</td><td>M2 + M4</td><td>31.44</td></tr>
+  </tbody>
+</table>
+</div>
+<p>All rows assume awards up to 100&nbsp;MW per product (§12).</p>
+<div class="box">
+<p class="label">What the methods view suggests next</p>
+<ol class="steps">
+  <li><b>Realistic reserve caps or a residual curve</b> (§12), before comparing methods further.</li>
+  <li><b>Couple the energy and reserve chains</b> (VAR(1) on \((z^E, F)\)): same 55 states, transitions from the joint model.</li>
+  <li><b>Look at regulation near full SoC</b>: 16–17&nbsp;MW against 30.5 for the self-schedule. Check whether it's the firm-reserve rule or C4 (§8).</li>
+  <li><b>LSMC on four-price paths</b> (M6) as an independent check, free of the factor model.</li>
+</ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="refs">§14 References</h2>
+<ol class="refs">
+  <li>Birge &amp; Louveaux, <i>Introduction to Stochastic Programming</i>, Springer, 2nd ed. 2011. EV, WS, VSS, EVPI; two-stage and multi-stage programs.</li>
+  <li>Heitsch &amp; Römisch, “Scenario reduction algorithms in stochastic programming”, <i>Computational Optimization and Applications</i>, 2003; “Scenario tree modeling for multistage stochastic programs”, <i>Mathematical Programming</i>, 2009.</li>
+  <li>Rockafellar &amp; Wets, “Scenarios and policy aggregation in optimization under uncertainty”, <i>Mathematics of Operations Research</i>, 1991. Progressive hedging.</li>
+  <li>Bertsekas, <i>Dynamic Programming and Optimal Control</i>, Vol. I, Athena Scientific. Bellman recursion, sufficient statistics.</li>
+  <li>Tauchen, “Finite state Markov-chain approximations to univariate and vector autoregressions”, <i>Economics Letters</i>, 1986.</li>
+  <li>Löhndorf, Wozabal &amp; Minner, “Optimizing trading decisions for hydro storage systems using approximate dual dynamic programming”, <i>Operations Research</i>, 2013. Scenario lattices.</li>
+  <li>Pereira &amp; Pinto, “Multi-stage stochastic optimization applied to energy planning”, <i>Mathematical Programming</i>, 1991 (SDDP). Philpott &amp; de Matos, <i>EJOR</i>, 2012 (Markov-chain SDDP).</li>
+  <li>Longstaff &amp; Schwartz, “Valuing American options by simulation: a simple least-squares approach”, <i>Review of Financial Studies</i>, 2001. Boogert &amp; de Jong, “Gas storage valuation using a Monte Carlo method”, <i>Journal of Derivatives</i>, 2008.</li>
+  <li>Brown, Smith &amp; Sun, “Information relaxations and duality in stochastic dynamic programs”, <i>Operations Research</i>, 2010.</li>
+  <li>Powell, <i>Reinforcement Learning and Stochastic Optimization</i>, Wiley, 2022. A unified view of policy classes (M1, M4, M6, M7).</li>
+</ol>
+</main>
+</div>

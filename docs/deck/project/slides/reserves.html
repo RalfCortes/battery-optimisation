@@ -1,0 +1,23 @@
+<section id="reserves" data-transition="fade" style="background:#F7F6F2;color:#14213D;font-family:'IBM Plex Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:36px">
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:64px;font-weight:700;line-height:1.1">Who should choose the reserves?</h2>
+<table style="font-size:28px;color:#14213D;width:1664px">
+<tr><th style="width:40%;text-align:left">Reserve planner (12 months, half-hourly)</th><th style="width:15%;text-align:right">Profit</th><th style="width:15%;text-align:right">Energy</th><th style="width:15%;text-align:right">Reserves</th><th style="width:15%;text-align:right">vs self-schedule</th></tr>
+<tr><td>MILP on the average price path</td><td style="text-align:right">32.98 M</td><td style="text-align:right">3.19 M</td><td style="text-align:right">29.79 M</td><td style="text-align:right">−0.45 M</td></tr>
+<tr><td>SDP, median reserve price per stage (default)</td><td style="text-align:right">34.22 M</td><td style="text-align:right">4.73 M</td><td style="text-align:right">29.49 M</td><td style="text-align:right">+0.80 M</td></tr>
+<tr><td>SDP, mean reserve price per stage</td><td style="text-align:right">34.49 M</td><td style="text-align:right">4.55 M</td><td style="text-align:right">29.94 M</td><td style="text-align:right">+1.06 M</td></tr>
+<tr style="background:#E8F0F8"><td><b>SDP, reserve price states (Markov, 5)</b></td><td style="text-align:right"><b>34.53 M</b></td><td style="text-align:right">4.54 M</td><td style="text-align:right">29.99 M</td><td style="text-align:right"><b>+1.11 M</b></td></tr>
+<tr><td>Stochastic MILP, 20 paths (worst-case caps)</td><td style="text-align:right">31.44 M</td><td style="text-align:right">5.11 M</td><td style="text-align:right">26.33 M</td><td style="text-align:right">−2.00 M</td></tr>
+</table>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:32px">
+<div style="display:flex;flex-direction:column;gap:14px;background:#FFFFFF;padding:36px;border:1px solid #DCDFE4;border-radius:16px">
+<h3 style="font-size:32px;font-weight:600;color:#2F6690">Why the SDP wins</h3>
+<p style="font-size:26px;line-height:1.45;color:#3D4A5C">It prices what each SoC level is worth for reserves and for trading, under the price uncertainty. Valuing reserves at their mean (+0.26 M) or with their own trajectories (+0.31 M) adds more.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:14px;background:#FFFFFF;padding:36px;border:1px solid #DCDFE4;border-radius:16px">
+<h3 style="font-size:32px;font-weight:600;color:#B35C10">Why the stochastic MILP loses</h3>
+<p style="font-size:26px;line-height:1.45;color:#3D4A5C">Each path’s energy sees that path’s future: arbitrage looks too valuable, so it holds 3.6 M fewer reserves and recovers only 2 M of energy. Fixing that needs a multi-stage tree, which is what the SDP is.</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6A7484">SGD per year, NEMS rules, regulation energy, market feasibility, compliant offers. Stochastic: worst-case caps, before the format changes (MILP on the same basis: 32.96 M)</p>
+<aside>Self-schedule 33.43 M on the same code; perfect foresight 42.67 M. The exact (non-relaxed) stochastic run is still going.</aside>
+</section>

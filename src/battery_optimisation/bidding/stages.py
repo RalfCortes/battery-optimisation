@@ -5,7 +5,9 @@ the price states per stage [T, K], their weights [K] and, for Markov prices, the
 between states [K, K] (``None``: stagewise independent).
 
 - ``ScenarioStages``: the copula scenarios (forecast run ``scenarios.parquet``), stagewise.
-- ``LatticeStages``: Markov price states from the quantile forecasts (``forecast.markov``).
+- ``LatticeStages``: Markov price states from the quantile forecasts (``forecast.markov``):
+  equal-probability bins (``price_lattice``) or a continuous score state on nodes
+  (``node_lattice``, ``price_model: continuous``); both give the SDP prices/weights/transitions.
 """
 
 from __future__ import annotations
@@ -22,12 +24,26 @@ import polars as pl
 from battery_optimisation.columns import Col
 from battery_optimisation.config import (
     BiddingConfig,
+    ContinuousConfig,
     MarketConfig,
     PriceModel,
     Product,
     ReserveMarkovConfig,
 )
-from battery_optimisation.forecast.markov import FactorLattice, factor_lattice, price_lattice
+from battery_optimisation.forecast.markov import (
+    FactorLattice,
+    PriceLattice,
+    factor_lattice,
+    node_lattice,
+    price_lattice,
+)
+
+LatticeBuilder = Callable[[np.ndarray, np.ndarray, float], PriceLattice]  # (levels, q, rho)
+
+
+def node_builder(cfg: ContinuousConfig) -> LatticeBuilder:
+    """Continuous score state for ``LatticeStages``."""
+    return lambda levels, q, rho: node_lattice(levels, q, cfg.nodes, cfg.z_max, rho)
 
 
 @dataclass(frozen=True)
@@ -80,14 +96,20 @@ class ScenarioStages:
 class LatticeStages:
     """Markov price states from quantile forecasts (long frame: issued_at, interval_start,
     lead_periods, quantile, usep_forecast). ``rho(first delivery interval)`` gives the lag-1
-    correlation of the issue."""
+    correlation of the issue. ``build``: the lattice of an issue (default: ``states``
+    equal-probability bins; ``node_builder``: continuous score state)."""
 
     def __init__(
-        self, quantiles: pl.DataFrame, states: int, rho: Callable[[datetime], float]
+        self,
+        quantiles: pl.DataFrame,
+        states: int,
+        rho: Callable[[datetime], float],
+        build: LatticeBuilder | None = None,
     ) -> None:
         self._frame = quantiles.sort(Col.ISSUED_AT, Col.LEAD_PERIODS, Col.QUANTILE)
         self._levels = np.sort(self._frame[Col.QUANTILE].unique().to_numpy())
         self.states, self.rho = states, rho
+        self._build = build or (lambda levels, q, r: price_lattice(levels, q, states, r))
         self.issues, self._rows = _row_ranges(self._frame)
 
     def load(self, issue: datetime) -> IssueStages:
@@ -95,7 +117,7 @@ class LatticeStages:
         part = self._frame.slice(a, b - a)
         q = part[Col.USEP_FORECAST].to_numpy().reshape(-1, self._levels.size)  # [T, Q]
         stamps = part[Col.INTERVAL_START].gather_every(self._levels.size).to_list()
-        lattice = price_lattice(self._levels, q, self.states, self.rho(stamps[0]))
+        lattice = self._build(self._levels, q, self.rho(stamps[0]))
         return IssueStages(
             stamps=stamps,
             prices=lattice.prices,
@@ -123,17 +145,21 @@ def stage_source(
     bidding: BiddingConfig,
     copula_lag1: dict[date, float] | None = None,
 ) -> StageSource:
-    """Stages for ``bidding.price_model``: copula scenarios, or the Markov lattice from the
-    quantiles with rho from the config, else from the walk-forward copula of each month."""
+    """Stages for ``bidding.price_model``: copula scenarios, or the Markov lattice (bins, or
+    continuous score nodes) from the quantiles with rho from the config, else from the
+    walk-forward copula of each month."""
     if bidding.price_model is PriceModel.INDEPENDENT:
         return ScenarioStages(scenarios)
     m = bidding.markov
+    continuous = bidding.price_model is PriceModel.CONTINUOUS
+    build = node_builder(bidding.continuous) if continuous else None
+    states = bidding.continuous.nodes if continuous else m.states
     if m.rho is not None:
         fixed = m.rho
-        return LatticeStages(quantiles, m.states, lambda _: fixed)
+        return LatticeStages(quantiles, states, lambda _: fixed, build)
     if not copula_lag1:
         raise ValueError("Markov prices need markov.rho or the copula lag-1 correlations")
-    return LatticeStages(quantiles, m.states, monthly_rho(copula_lag1))
+    return LatticeStages(quantiles, states, monthly_rho(copula_lag1), build)
 
 
 class ReserveLattices:
