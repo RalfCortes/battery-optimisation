@@ -63,6 +63,8 @@ stochastic_paths: 20
 stochastic_relax: false       # LP relaxation of the stochastic plan (~6x faster)
 ancillary_price: median       # water value's reserve prices: median | mean (revenue is linear: mean)
 reserve_prices: point         # point (one forecast per stage) | markov (reserve price states)
+reserve_offers: fixed          # fixed (chosen MW at price 0) | curve (rising curve per product
+                              # priced at opportunity cost; needs feasibility: market)
 reserve_markov:               # one common reserve factor (fit on 2025-26 forecast errors)
   states: 5
   rho: 0.75

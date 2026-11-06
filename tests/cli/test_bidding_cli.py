@@ -86,3 +86,13 @@ def test_continuous_price_state_runs_get_their_own_folders() -> None:
     assert bidding_tag(b, False) == f"market_continuous{b.continuous.nodes}"
     fixed = b.model_copy(update={"markov": b.markov.model_copy(update={"rho": 0.83})})
     assert bidding_tag(fixed, True) == f"market_continuous{b.continuous.nodes}_r0.83_as_sdpres"
+
+
+def test_priced_reserve_offer_runs_get_their_own_folders() -> None:
+    from battery_optimisation.config import ReserveOffers
+
+    b = load_bidding()
+    assert b.reserve_offers is ReserveOffers.FIXED  # config default: reserves offered at 0
+    curve = b.model_copy(update={"reserve_offers": ReserveOffers.CURVE})
+    assert bidding_tag(curve, True) == "market_markov_as_sdpres_rcurve"
+    assert bidding_tag(curve, False) == "market_markov"  # energy only: no reserve offers

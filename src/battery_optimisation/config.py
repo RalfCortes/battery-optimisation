@@ -360,6 +360,13 @@ class ContinuousConfig(_Config):
     z_max: float = Field(default=3.0, gt=0)
 
 
+class ReserveOffers(StrEnum):
+    """How the water value offers the reserves it chose (reserve planner ``sdp``)."""
+
+    FIXED = "fixed"  # the mix best at the expected prices, at 0 SGD/MW/h (always clears)
+    CURVE = "curve"  # per product, a rising curve priced at opportunity cost (bidding/ancillary)
+
+
 class ReservePrices(StrEnum):
     """How the water value's SDP sees reserve prices (reserve planner ``sdp``)."""
 
@@ -411,6 +418,7 @@ class BiddingConfig(_Config):
     stochastic_paths: int = Field(default=20, ge=1)  # price paths of the stochastic reserve plan
     ancillary_price: AncillaryPrice = AncillaryPrice.MEDIAN
     reserve_prices: ReservePrices = ReservePrices.POINT
+    reserve_offers: ReserveOffers = ReserveOffers.FIXED
     reserve_markov: ReserveMarkovConfig = ReserveMarkovConfig()
     record_plans: bool = True  # keep each decision's plan (plans.parquet) for troubleshooting
     stochastic_relax: bool = False  # LP relaxation of the stochastic plan (no binaries, faster)

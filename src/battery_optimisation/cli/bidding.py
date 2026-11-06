@@ -35,6 +35,7 @@ from battery_optimisation.config import (
     BiddingConfig,
     FeasibilityMode,
     PriceModel,
+    ReserveOffers,
     ReservePlanner,
     ReservePrices,
     load_battery,
@@ -83,6 +84,8 @@ def bidding_tag(bidding: BiddingConfig, ancillary: bool) -> str:
             tag += f"_resmkv{bidding.reserve_markov.states}"
         elif bidding.ancillary_price is not AncillaryPrice.MEDIAN:
             tag += f"_anc{bidding.ancillary_price}"
+        if bidding.reserve_offers is ReserveOffers.CURVE:
+            tag += "_rcurve"
     return tag
 
 
@@ -116,6 +119,10 @@ def run(
     ] = None,
     stochastic_relax: Annotated[
         bool | None, typer.Option(help="Stochastic reserve plan: LP relaxation. Default: config.")
+    ] = None,
+    reserve_offers: Annotated[
+        ReserveOffers | None,
+        typer.Option(help="Water value: reserves at 0 (fixed) or priced curves. Default: config."),
     ] = None,
     reserve_prices: Annotated[
         ReservePrices | None,
@@ -158,6 +165,8 @@ def run(
         data["ancillary_price"] = ancillary_price
     if reserve_prices is not None:
         data["reserve_prices"] = reserve_prices
+    if reserve_offers is not None:
+        data["reserve_offers"] = reserve_offers
     bidding = BiddingConfig.model_validate(data)
     fr = load_forecast_run(forecast_run or list_forecast_runs()[0])
     market = load_market(market_config) if market_config else load_market()

@@ -19,6 +19,7 @@ import numpy as np
 import polars as pl
 
 from battery_optimisation.battery import TOL, Battery
+from battery_optimisation.bidding.ancillary import curve_tranches, reserve_curve
 from battery_optimisation.bidding.compress import compress
 from battery_optimisation.bidding.feasibility import (
     caps_from_bounds,
@@ -40,6 +41,7 @@ from battery_optimisation.config import (
     FeasibilityMode,
     MarketConfig,
     Product,
+    ReserveOffers,
     ReservePlanner,
 )
 from battery_optimisation.forecast.base import Forecaster
@@ -316,6 +318,16 @@ class WaterValueStrategy:
             if ancillary and bidding.reserve_planner is ReservePlanner.SDP
             else None
         )
+        # reserve_offers curve: priced reserve tranches per target interval
+        self.priced_reserves = (
+            self._reserves is not None and bidding.reserve_offers is ReserveOffers.CURVE
+        )
+        if self.priced_reserves and bidding.feasibility.mode is not FeasibilityMode.MARKET:
+            raise ValueError(
+                "reserve_offers curve needs feasibility: market (the engine settles reserves "
+                "against energy and the SoC)"
+            )
+        self._reserve_offers: dict[datetime, tuple[AncillaryTranche, ...]] = {}
         # per-issue price stages: copula scenarios (frame) or any StageSource (Markov lattice)
         self._stages: StageSource = (
             ScenarioStages(scenarios) if isinstance(scenarios, pl.DataFrame) else scenarios
@@ -559,19 +571,21 @@ class WaterValueStrategy:
         self._reserve_values[issue] = values
         return corners_.rewards(values)
 
-    def _choose_reserves(
-        self, vf: ValueFunction, issue: datetime, t: int, soc: float
-    ) -> tuple[dict[Product, float], Callable[[np.ndarray, np.ndarray], np.ndarray]]:
-        """Reserves to offer for stage ``t`` from ``soc``: among the mixes that are best for some
-        price state (jointly with its energy action), the one with the highest expected value
-        over the price states when the energy action must then fit beside it. Returns the
-        awards and the energy actions they allow."""
-        rs, dt, b = self._reserves, self.market.interval_h, self.battery
+    def _expected_reserve_value(self, vf: ValueFunction, issue: datetime, t: int) -> np.ndarray:
+        """SGD per MW held in stage ``t`` [P]; with reserve price states, the expectation over
+        their distribution at t (reserves are offered before the price is known)."""
         value = self._reserve_values[issue][t]
-        if value.ndim == 2:  # reserve price states: offered before the price is known, so the
-            # mix is worth its expected value over the states' distribution at t
+        if value.ndim == 2:
             occ = vf.joint_occupancy[t].reshape(-1, value.shape[0]).sum(axis=0)
             value = occ @ value
+        return value
+
+    def _energy_options(self, vf: ValueFunction, t: int, soc: float) -> SimpleNamespace:
+        """The energy actions of stage ``t`` from ``soc`` (targets on the SOC grid and at the
+        power limits) and their value per energy price state [K, targets]: cash now + value
+        after t (which depends on the price), minus wear; ``fits(awards)``: the actions a
+        reserve mix allows (storage rules at ``soc``)."""
+        rs, dt, b = self._reserves, self.market.interval_h, self.battery
         here = Battery(b, soc)
         lo = soc - here.max_discharge_mw(dt) * here.discharge_loss(dt)
         hi = soc + here.max_charge_mw(dt) * here.charge_gain(dt)
@@ -591,12 +605,7 @@ class WaterValueStrategy:
             + f * after[:, left + 1]
             - here.degradation_sgd(charge, discharge, dt)
         )  # [K, targets]
-        x, ok = corners(rs, np.full(target.size, soc), charge, discharge)
-        reward, mix = best_reserves(x, ok, value)  # [targets], [targets, P]
-        best = (energy + reward[None, :]).argmax(axis=1)
-        candidates = np.unique(np.vstack([mix[best], np.zeros(len(rs.products))]), axis=0)
         weights = vf.occupancy[t] if vf.occupancy is not None else np.full(states.size, 1.0)
-        weights = weights / weights.sum()
 
         def fits(awards: np.ndarray):
             def allowed(c: np.ndarray, d: np.ndarray) -> np.ndarray:
@@ -605,14 +614,80 @@ class WaterValueStrategy:
 
             return allowed
 
+        return SimpleNamespace(
+            target=target,
+            charge=charge,
+            discharge=discharge,
+            net=net,
+            energy=energy,
+            weights=weights / weights.sum(),
+            fits=fits,
+        )
+
+    def _choose_reserves(
+        self, vf: ValueFunction, issue: datetime, t: int, soc: float
+    ) -> tuple[dict[Product, float], Callable[[np.ndarray, np.ndarray], np.ndarray]]:
+        """Reserves to offer for stage ``t`` from ``soc``: among the mixes that are best for some
+        price state (jointly with its energy action), the one with the highest expected value
+        over the price states when the energy action must then fit beside it. Returns the
+        awards and the energy actions they allow."""
+        rs = self._reserves
+        value = self._expected_reserve_value(vf, issue, t)
+        o = self._energy_options(vf, t, soc)
+        x, ok = corners(rs, np.full(o.target.size, soc), o.charge, o.discharge)
+        reward, mix = best_reserves(x, ok, value)  # [targets], [targets, P]
+        best = (o.energy + reward[None, :]).argmax(axis=1)
+        candidates = np.unique(np.vstack([mix[best], np.zeros(len(rs.products))]), axis=0)
+
         def expected(awards: np.ndarray) -> float:
-            keep = fits(awards)(charge, discharge) | (np.abs(net) < TOL)
+            keep = o.fits(awards)(o.charge, o.discharge) | (np.abs(o.net) < TOL)
             if not keep.any():
                 return -np.inf
-            return float(weights @ np.where(keep, energy, -np.inf).max(axis=1) + value @ awards)
+            return float(o.weights @ np.where(keep, o.energy, -np.inf).max(axis=1) + value @ awards)
 
         chosen = max(candidates, key=expected)
-        return dict(zip(rs.products, map(float, chosen), strict=True)), fits(chosen)
+        return dict(zip(rs.products, map(float, chosen), strict=True)), o.fits(chosen)
+
+    RESERVE_GRID_POINTS = 241  # reserve prices swept per curve (0 .. 3 x the highest state)
+
+    def _reserve_curves(
+        self, vf: ValueFunction, issue: datetime, t: int, soc: float
+    ) -> tuple[dict[Product, float], tuple[AncillaryTranche, ...], np.ndarray]:
+        """``reserve_offers: curve``: for each product, the MW the gate-closure choice would hold
+        at each of its prices (the others at their expected value), over every valid reserve mix
+        at ``soc`` (corners for each energy action); each step priced at its opportunity cost
+        (``bidding.ancillary``). Returns the mix chosen at the expected prices (the plan), the
+        tranches, and the MW held at price 0 (certain: the energy curve must fit beside it)."""
+        rs, dt, m = self._reserves, self.market.interval_h, self.market
+        value = self._expected_reserve_value(vf, issue, t)
+        o = self._energy_options(vf, t, soc)
+        x, ok = corners(rs, np.full(o.target.size, soc), o.charge, o.discharge)
+        mixes = np.unique(
+            np.vstack([np.round(x[ok], 6), np.zeros((1, len(rs.products)))]), axis=0
+        )  # [C, P]
+        z = np.stack([np.full(o.target.size, soc), o.charge, o.discharge, np.ones(o.target.size)])
+        room = z.T @ rs.rhs.T  # [targets, M]
+        keep = (mixes @ rs.a.T)[:, None, :] <= room[None, :, :] + 1e-6  # [C, targets, M]
+        keep = keep.all(axis=2) | (np.abs(o.net) < TOL)[None, :]
+        best = np.where(keep[None], o.energy[:, None, :], -np.inf).max(axis=2)  # [K, C]
+        base = o.weights @ best  # [C]
+        _, prices, weights = self._issue_prices[issue]
+        energy_mean = np.array([prices[t] @ weights])
+        extra = stage_values(
+            m, self.battery, rs.products, np.zeros((1, len(rs.products))), energy_mean, dt
+        )[0]
+        states = self._reserve_values[issue][t]
+        states = states if states.ndim == 2 else states[None, :]
+        highest = ((states - extra) / dt).max(axis=0)  # [P] SGD/MW/h
+        chosen = mixes[np.argmax(base + mixes @ value)]
+        tranches, certain = [], np.zeros(len(rs.products))
+        for i, p in enumerate(rs.products):
+            grid = np.linspace(0.0, 3.0 * max(highest[i], 1.0), self.RESERVE_GRID_POINTS)
+            mw = reserve_curve(mixes, base, value, extra, i, grid, dt)
+            certain[i] = mw[0]
+            tranches += curve_tranches(grid, mw, p, m.n_tranches)
+        awards = dict(zip(rs.products, map(float, chosen), strict=True))
+        return awards, tuple(t for t in tranches if t.product in m.ancillary_products), certain
 
     def _ancillary_prices(self, known, end: datetime) -> pl.DataFrame:
         if self.ancillary_forecaster is not None:
@@ -705,7 +780,14 @@ class WaterValueStrategy:
 
         steps: dict[CurveStep, IntervalOffers] = {}
         allowed = None
-        if self._reserves is not None:
+        if self.priced_reserves:
+            awards, tranches, certain = self._reserve_curves(vf, issue, t, reference)
+            self._plan_awards[at] = awards  # the plan: the mix best at the expected prices
+            self._reserve_offers[at] = tranches
+            # the energy curve may use whatever is not committed for certain (offered at 0);
+            # if more reserves clear, the engine settles them against energy by surplus
+            allowed = self._energy_options(vf, t, reference).fits(certain)
+        elif self._reserves is not None:
             awards, allowed = self._choose_reserves(vf, issue, t, reference)
             self._plan_awards[at] = awards
         discharge, charge = offer_curve(vf, t, reference, here, dt, allowed)
@@ -733,6 +815,11 @@ class WaterValueStrategy:
         """Cap tranche sizes from the SOC bounds after the pending offers (``feasibility``)."""
         dt, m, f = self.market.interval_h, self.market, self.bidding.feasibility
         pending_offers = [o for _, o in pending]
+        if offers.interval_start in self._reserve_offers:  # priced curves, feasibility market:
+            # the engine cuts the schedule (energy and reserves) to the SoC
+            return offers.model_copy(
+                update={"ancillary": self._reserve_offers[offers.interval_start]}
+            )
         if self.ancillary and offers.interval_start in self._plan_awards:
             return self._feasible_with_ancillary(offers, soc_mwh, pending_offers, here)
         if f.mode is FeasibilityMode.MARKET:

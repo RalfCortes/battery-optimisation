@@ -573,6 +573,79 @@ def test_sdp_chooses_reserves_inside_the_water_value(battery_cfg, market_cfg, mo
         assert all(q >= 0 for q in sold)
 
 
+def test_priced_reserve_offers(battery_cfg, market_cfg) -> None:
+    """``reserve_offers: curve``: each product is offered as a rising curve priced at its
+    opportunity cost (at most K pairs, within the award caps) instead of a fixed MW at 0; the
+    engine settles conflicts with energy; nothing breaches and reserves still earn."""
+    from battery_optimisation.bidding.stages import LatticeStages
+    from battery_optimisation.config import (
+        FeasibilityMode,
+        Product,
+        ReserveOffers,
+        ReservePlanner,
+    )
+    from battery_optimisation.sim.clearing import price_column
+
+    rng = np.random.default_rng(0)
+    base = make_prices(daily_shape(DAYS + 1, seed=4))
+    prices = base.with_columns(
+        pl.Series(price_column(Product.REGULATION, market_cfg), rng.uniform(15, 35, base.height)),
+        pl.Series(
+            price_column(Product.PRIMARY_RESERVE, market_cfg), rng.uniform(5, 15, base.height)
+        ),
+        pl.Series(
+            price_column(Product.CONTINGENCY_RESERVE, market_cfg), rng.uniform(10, 30, base.height)
+        ),
+    )
+    history, window = prices.slice(0, 48), prices.slice(48)
+    qf = quantiles_for(
+        window.select(Col.INTERVAL_START, Col.USEP), 40.0, market_cfg.gate_closure_intervals
+    )
+    base_cfg = markov_bidding()
+    bidding = base_cfg.model_copy(
+        update={
+            "reserve_planner": ReservePlanner.SDP,
+            "reserve_offers": ReserveOffers.CURVE,
+            "feasibility": base_cfg.feasibility.model_copy(update={"mode": FeasibilityMode.MARKET}),
+        }
+    )
+    stages = LatticeStages(qf, bidding.markov.states, lambda _: 0.8)
+    strategy = WaterValueStrategy(stages, battery_cfg, market_cfg, bidding, ancillary=True)
+    dispatch = Simulator(Market(market_cfg, window, history), Battery(battery_cfg)).run(strategy)
+    assert dispatch.total().ancillary_sgd > 0
+    assert dispatch.total().shortfall_mwh == 0.0
+    priced = 0
+    for offers in strategy.submitted.values():
+        for p in {t.product for t in offers.ancillary}:
+            mine = [t for t in offers.ancillary if t.product is p]
+            assert len(mine) <= market_cfg.n_tranches
+            assert [t.price for t in mine] == sorted(t.price for t in mine)
+            assert sum(t.quantity_mw for t in mine) <= market_cfg.ancillary.max_award_mw[p] + 1e-6
+            priced += sum(t.price > 0 for t in mine)
+    assert priced > 0  # not everything at 0: the curves carry prices
+
+
+def test_priced_reserve_offers_need_market_feasibility(battery_cfg, market_cfg) -> None:
+    from battery_optimisation.bidding.stages import LatticeStages
+    from battery_optimisation.config import FeasibilityMode, ReserveOffers, ReservePlanner
+
+    base_cfg = markov_bidding()
+    bidding = base_cfg.model_copy(
+        update={
+            "reserve_planner": ReservePlanner.SDP,
+            "reserve_offers": ReserveOffers.CURVE,
+            "feasibility": base_cfg.feasibility.model_copy(
+                update={"mode": FeasibilityMode.WORST_CASE}
+            ),
+        }
+    )
+    prices = make_prices(daily_shape(2, seed=4))
+    qf = quantiles_for(prices, 40.0, market_cfg.gate_closure_intervals)
+    stages = LatticeStages(qf, bidding.markov.states, lambda _: 0.8)
+    with pytest.raises(ValueError, match="feasibility"):
+        WaterValueStrategy(stages, battery_cfg, market_cfg, bidding, ancillary=True)
+
+
 def test_stochastic_reserve_plan_runs_without_breaches(battery_cfg, market_cfg) -> None:
     """Reserve planner ``stochastic_milp``: reserves planned against sampled Markov price paths;
     the awards are sustainable (the simulator checks) and earn ancillary revenue."""

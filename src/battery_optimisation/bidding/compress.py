@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from battery_optimisation.sim.clearing import Tranche
+from battery_optimisation.sim.clearing import AncillaryTranche, Tranche
 
 
-def compress(tranches: list[Tranche], k: int) -> list[Tranche]:
-    """``tranches``: one side, in cumulative order."""
+def compress[T: (Tranche, AncillaryTranche)](tranches: list[T], k: int) -> list[T]:
+    """``tranches``: one side (or one ancillary product), in cumulative order."""
     if len(tranches) <= k:
         return list(tranches)
     prices = np.array([t.price for t in tranches])
@@ -25,5 +25,5 @@ def compress(tranches: list[Tranche], k: int) -> list[Tranche]:
         group = tranches[a:b]
         mw = sum(t.quantity_mw for t in group)
         price = sum(t.price * t.quantity_mw for t in group) / mw
-        out.append(Tranche(side=group[0].side, price=price, quantity_mw=mw))
+        out.append(group[0].model_copy(update={"price": price, "quantity_mw": mw}))
     return out
