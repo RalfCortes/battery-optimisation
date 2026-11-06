@@ -29,6 +29,7 @@ from battery_optimisation.data.nems import (
 )
 from battery_optimisation.data.weather import WeatherProcessingReport
 from battery_optimisation.forecast.covariates import add_known_covariates
+from battery_optimisation.forecast.markov import empirical_transitions
 from battery_optimisation.forecast.quantiles import pit
 from battery_optimisation.forecast.scenarios import GaussianCopula, reduce_scenarios, sample_paths
 from battery_optimisation.sim.clearing import price_column
@@ -149,6 +150,22 @@ def calibration_pits(
     ok = ~np.isnan(y)
     u[ok] = pit(levels, values[ok], y[ok])
     return u
+
+
+def month_transitions(
+    qf: pl.DataFrame,
+    realised: pl.DataFrame,
+    month_start: date,
+    cfg: ForecastConfig,
+    states: int,
+    rho: float,
+    prior: float,
+) -> np.ndarray:
+    """Empirical Markov transitions for month M (``markov.empirical_transitions``), from the
+    PITs of the copula's calibration window: issues whose whole horizon was realised before M."""
+    before = datetime.combine(month_start, datetime.min.time(), _SGT)
+    u = calibration_pits(qf, realised, before, cfg.scenarios.calibration_days, cfg.quantile_levels)
+    return empirical_transitions(u, states, rho, prior)
 
 
 def fit_month_copula(

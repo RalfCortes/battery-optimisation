@@ -346,9 +346,18 @@ class PriceModel(StrEnum):
     MARKOV = "markov"  # price states from the quantiles, persisting (forecast/markov.py)
 
 
+class TransitionModel(StrEnum):
+    """How the Markov price states move from one stage to the next."""
+
+    TAUCHEN = "tauchen"  # AR(1) in normal scores with lag-1 correlation rho
+    EMPIRICAL = "empirical"  # counted from the PITs of the month's calibration window
+
+
 class MarkovConfig(_Config):
     states: int = Field(ge=2)  # price states per stage
     rho: float | None = Field(default=None, ge=0, lt=1)  # lag-1 correlation; None: copula's
+    transitions: TransitionModel = TransitionModel.TAUCHEN
+    prior_strength: PositiveFloat = 50.0  # empirical: Tauchen pseudo-counts per row
 
 
 class ReservePrices(StrEnum):

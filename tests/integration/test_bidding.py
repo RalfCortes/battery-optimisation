@@ -805,3 +805,39 @@ def test_water_value_with_reserve_price_states(battery_cfg, market_cfg) -> None:
     # older issues dropped their policy (memory), the latest keep it
     kept = [i for i, v in strategy.value_functions.items() if v.policy is not None]
     assert 0 < len(kept) <= WaterValueStrategy.POLICIES_KEPT
+
+
+def test_lattice_stages_use_given_transitions() -> None:
+    from battery_optimisation.bidding.stages import LatticeStages
+
+    prices = make_prices(daily_shape(2, seed=3))
+    qf = quantiles_for(prices, 60.0, 2)
+    m = np.full((11, 11), 1 / 11)
+    stages = LatticeStages(qf, 11, lambda _: 0.8, transitions=lambda _: m)
+    assert np.array_equal(stages.load(stages.issues[0]).transitions, m)
+
+
+def test_bidding_report_with_empirical_transitions(battery_cfg, market_cfg) -> None:
+    from datetime import date
+
+    from battery_optimisation.bidding.report import evaluate_bidding
+    from battery_optimisation.config import TransitionModel
+
+    prices = make_prices(daily_shape(DAYS, seed=8))
+    gap = market_cfg.gate_closure_intervals
+    qf = quantiles_for(prices, 60.0, gap)
+    scen = scenario_frame(prices, n=5, noise=60.0, gap=gap, seed=2)
+    bidding = markov_bidding(None)
+    bidding = bidding.model_copy(
+        update={
+            "markov": bidding.markov.model_copy(update={"transitions": TransitionModel.EMPIRICAL})
+        }
+    )
+    args = (scen, qf, prices, battery_cfg, market_cfg, bidding)
+    with pytest.raises(ValueError, match="empirical"):
+        evaluate_bidding(*args, copula_lag1={date(2026, 1, 1): 0.7})
+    sticky = np.full((11, 11), 0.02) + 0.78 * np.eye(11)
+    ev = evaluate_bidding(
+        *args, copula_lag1={date(2026, 1, 1): 0.7}, transitions={date(2026, 1, 1): sticky}
+    )
+    assert ev.report.sdp_days == DAYS

@@ -100,6 +100,17 @@ clearing simulator on held-out data.
        persistence -> fake spreads: the SDP expected 25 M SGD/yr where perfect foresight makes 16 M,
        and re-planning more often made it *worse* (rolling 6.74 M < daily 6.98 M). Markov: daily
        7.77 M, rolling 8.29 M (rho 0.83). Never go back to independent stages.
+     Markov `transitions` (tauchen | empirical, default tauchen): real forecast errors are not an
+     AR(1) (2025-26 daily PITs: middle states stickier, 5->5 28% vs 16% Tauchen; extreme states
+     jump, 0 -> states 6-10 ~1% each vs ~0; lag-8 corr 0.36 vs rho^8 0.24; mean 16.6 pp per row
+     from Tauchen), while rho is the same by time of day (0.81-0.87) and on wide vs narrow
+     forecasts (0.84/0.84), so per-stage or analog matrices would add little. `empirical`
+     (`markov.empirical_transitions`, `walkforward.month_transitions`): counts of (bin at t, bin
+     at t+1) over the month's copula calibration window (no look-ahead), + `prior_strength` (50)
+     Tauchen pseudo-counts per row (~385 real counts), Sinkhorn-balanced so the states stay
+     equally likely. Same [K, K] per month: the SDP is unchanged. 12 months daily, energy only
+     (2025-11 -> 2026-10-29): water value 9.01 M vs Tauchen 8.80 M (+0.22 M, capture 52.1 ->
+     53.4%), better in 10 of 12 months (Aug +123 k; Oct -49 k). TODO: half-hourly and ancillary.
      Per interval, at gate closure: curve from V_{t+1} around
      the *expected* SOC (own pending offers cleared under the scenarios) -> trim to the scenario price
      band (+- margin) -> compress to K -> tranches beyond the band made price-taking (floor/cap,

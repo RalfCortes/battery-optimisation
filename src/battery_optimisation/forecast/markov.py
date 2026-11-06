@@ -55,6 +55,36 @@ def price_lattice(
     )
 
 
+SINKHORN_ITERATIONS = 500
+
+
+def empirical_transitions(
+    u: np.ndarray, states: int, rho: float, prior_strength: float
+) -> np.ndarray:
+    """Transitions [K, K] counted from PITs ``u`` [issues, T]: the equal-probability state of
+    each step (bin of u) and of the next one, over all consecutive steps without a NaN.
+
+    Real forecast errors are not an AR(1): the middle states are stickier, the extreme ones jump
+    (2025-26: 16 pp per row from Tauchen). Each row gets ``prior_strength`` pseudo-counts spread
+    like the Tauchen row at ``rho`` (rare rows lean on it), then the matrix is balanced
+    (Sinkhorn) so that rows and columns sum to 1: the states stay equally likely at every stage,
+    as the lattice assumes."""
+    edges = ndtri(np.linspace(0.0, 1.0, states + 1))
+    density = np.exp(-(edges**2) / 2) / np.sqrt(2 * np.pi)
+    prior = _transitions(edges, (density[:-1] - density[1:]) * states, rho)
+    counts = prior_strength * prior
+    u = np.asarray(u, float)
+    if u.size:
+        s = np.minimum((np.nan_to_num(u) * states).astype(np.int64), states - 1)  # NaN: masked
+        ok = ~np.isnan(u[:, :-1]) & ~np.isnan(u[:, 1:])
+        np.add.at(counts, (s[:, :-1][ok], s[:, 1:][ok]), 1.0)
+    m = counts / counts.sum(axis=1, keepdims=True)
+    for _ in range(SINKHORN_ITERATIONS):
+        m /= m.sum(axis=0, keepdims=True)
+        m /= m.sum(axis=1, keepdims=True)
+    return m
+
+
 HERMITE_POINTS = 16  # quadrature over each product's own (idiosyncratic) part
 
 

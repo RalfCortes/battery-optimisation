@@ -15,6 +15,7 @@ from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import polars as pl
 from pydantic import BaseModel
 
@@ -120,6 +121,7 @@ def evaluate_bidding(
     ancillary: bool = False,
     ancillary_quantiles: pl.DataFrame | None = None,
     copula_lag1: dict[date, float] | None = None,
+    transitions: dict[date, np.ndarray] | None = None,
 ) -> BiddingEvaluation:
     """Perfect foresight, self-schedule and water value over ``realised``'s window, all planned
     with ``horizon`` (DAY for daily forecasts, ROLLING for intraday ones). ``copula_lag1``:
@@ -150,7 +152,7 @@ def evaluate_bidding(
             ancillary_quantiles, market, bidding.reserve_markov, tuple(market.ancillary_products)
         )
     water_value = WaterValueStrategy(
-        stage_source(scenarios, quantiles, bidding, copula_lag1),
+        stage_source(scenarios, quantiles, bidding, copula_lag1, transitions),
         battery,
         market,
         bidding,

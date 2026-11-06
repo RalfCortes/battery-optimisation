@@ -28,6 +28,7 @@ from battery_optimisation.bidding.report import (
     to_markdown,
     with_sweep,
 )
+from battery_optimisation.bidding.stages import empirical_by_month
 from battery_optimisation.bidding.sweep import sweep, sweep_breakdown
 from battery_optimisation.columns import Col
 from battery_optimisation.config import (
@@ -37,6 +38,7 @@ from battery_optimisation.config import (
     PriceModel,
     ReservePlanner,
     ReservePrices,
+    TransitionModel,
     load_battery,
     load_bidding,
     load_market,
@@ -70,6 +72,8 @@ def bidding_tag(bidding: BiddingConfig, ancillary: bool) -> str:
     )
     if bidding.price_model is PriceModel.MARKOV:
         tag += "_markov" + ("" if bidding.markov.rho is None else f"_r{bidding.markov.rho:g}")
+        if bidding.markov.transitions is not TransitionModel.TAUCHEN:
+            tag += f"_{bidding.markov.transitions}"
     if ancillary:
         tag += "_as" + ("" if bidding.firm_reserves else "_hybrid")
         if bidding.reserve_planner is ReservePlanner.SDP:
@@ -103,6 +107,9 @@ def run(
     price_model: Annotated[PriceModel | None, typer.Option(help="Default: config.")] = None,
     rho: Annotated[
         float | None, typer.Option(help="Markov lag-1 correlation. Default: config, else copula.")
+    ] = None,
+    transitions: Annotated[
+        TransitionModel | None, typer.Option(help="Markov transitions. Default: config.")
     ] = None,
     reserve_planner: Annotated[
         ReservePlanner | None,
@@ -145,6 +152,8 @@ def run(
         data["price_model"] = price_model
     if rho is not None:
         data["markov"]["rho"] = rho
+    if transitions is not None:
+        data["markov"]["transitions"] = transitions
     if reserve_planner is not None:
         data["reserve_planner"] = reserve_planner
     if stochastic_paths is not None:
@@ -163,6 +172,14 @@ def run(
     realised = prices.filter(pl.col(Col.INTERVAL_START).dt.date() >= start)
     history = prices.filter(pl.col(Col.INTERVAL_START).dt.date() < start)
     horizon = schedule_horizon(fr.report.config, market)
+    copula_lag1 = {s.period_start: s.copula_lag1 for s in fr.report.scenarios}
+    matrices = None
+    if bidding.markov.transitions is TransitionModel.EMPIRICAL:
+        warmup = start - timedelta(days=fr.report.config.scenarios.calibration_days + 1)
+        usep = load_prices(warmup, fr.report.test_end, market, ancillary=False)
+        matrices = empirical_by_month(
+            fr.quantiles, usep, copula_lag1, fr.report.config, bidding.markov
+        )
     ev = evaluate_bidding(
         fr.scenarios,
         fr.quantiles,
@@ -174,7 +191,8 @@ def run(
         history=history,
         ancillary=ancillary,
         ancillary_quantiles=fr.ancillary_quantiles,
-        copula_lag1={s.period_start: s.copula_lag1 for s in fr.report.scenarios},
+        copula_lag1=copula_lag1,
+        transitions=matrices,
     )
     if ancillary:
         source = "Chronos-2" if fr.ancillary_quantiles is not None else "persistence"
@@ -185,7 +203,7 @@ def run(
         + (
             f" ({m.states} states, rho "
             + ("walk-forward copula" if m.rho is None else f"{m.rho:g}")
-            + ")"
+            + f", {m.transitions} transitions)"
             if bidding.price_model is PriceModel.MARKOV
             else ""
         )

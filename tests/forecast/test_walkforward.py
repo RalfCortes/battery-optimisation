@@ -201,3 +201,17 @@ def test_month_scenarios_keep_whole_issues_by_first_delivery() -> None:
     assert walkforward.month_scenarios(
         qf, None, date(2026, 2, 1), date(2026, 2, 28), cfg, copula
     ).is_empty()
+
+
+def test_month_transitions_use_only_issues_realised_before_the_month() -> None:
+    qf, realised = synthetic(days=40)
+    month = date(2026, 2, 1)
+    changed = realised.with_columns(
+        pl.when(pl.col(Col.INTERVAL_START).dt.date() >= month)
+        .then(pl.col(Col.USEP) * 3)
+        .otherwise(pl.col(Col.USEP))
+        .alias(Col.USEP)
+    )
+    a = walkforward.month_transitions(qf, realised, month, CFG, states=11, rho=0.8, prior=50.0)
+    b = walkforward.month_transitions(qf, changed, month, CFG, states=11, rho=0.8, prior=50.0)
+    assert a.shape == (11, 11) and np.array_equal(a, b)

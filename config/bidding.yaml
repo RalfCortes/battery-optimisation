@@ -14,6 +14,8 @@ price_model: markov
 markov:
   states: 11       # equal-probability price states per stage
   rho: null        # lag-1 correlation; null: walk-forward copula of each month (~0.77)
+  transitions: tauchen  # tauchen (AR(1) from rho) | empirical (counted from past PITs, monthly)
+  prior_strength: 50    # empirical: Tauchen pseudo-counts per row (~385 real counts per row)
 
 # Offer only tranches that could clear: discharge priced <= the highest scenario price of the
 # interval (+ margin), charge priced >= the lowest (- margin). Unoffered capacity is not counted
