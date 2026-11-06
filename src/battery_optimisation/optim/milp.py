@@ -1,7 +1,13 @@
-"""Battery dispatch MILP (energy only, for now), solved with HiGHS.
+"""Battery dispatch MILP, solved with HiGHS: energy, and with the ancillary price columns,
+regulation, primary and contingency reserve co-optimised (``solve_schedule``; NEMS storage
+rules, regulation energy, ``firm_reserves``). ``solve_reserve_plan``: two-stage stochastic
+version, reserves shared by several energy price paths.
 
 Used by ``bidding.strategy.ScheduleStrategy`` (perfect-foresight benchmark, self-schedule
-baseline). Solves exactly the window it is given; planning windows are the strategy's business.
+baseline) and by the water value's ``milp`` / ``stochastic_milp`` reserve planners. Solves
+exactly the window it is given; planning windows are the strategy's business.
+
+Energy part below; the reserve variables and constraints are in ``solve_schedule``.
 
 Variables per interval t (Δ = market.interval_h):
   c_t, d_t ∈ [0, P]       charge / discharge power at the grid connection (MW)
