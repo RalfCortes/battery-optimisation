@@ -10,7 +10,7 @@ end-of-day rule) gives the capture rates.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -18,17 +18,31 @@ from zoneinfo import ZoneInfo
 import polars as pl
 from pydantic import BaseModel
 
-from battery_optimisation.bidding.stages import stage_source
+from battery_optimisation.bidding.stages import ReserveLattices, stage_source
 from battery_optimisation.bidding.strategy import Horizon, ScheduleStrategy, WaterValueStrategy
 from battery_optimisation.bidding.sweep import StepGap, SweepStats
 from battery_optimisation.columns import Col
-from battery_optimisation.config import BatteryConfig, BiddingConfig, FeasibilityMode, MarketConfig
+from battery_optimisation.config import (
+    AncillaryPrice,
+    BatteryConfig,
+    BiddingConfig,
+    FeasibilityMode,
+    MarketConfig,
+    ReservePlanner,
+    ReservePrices,
+)
 from battery_optimisation.data.nems import TZ
 from battery_optimisation.forecast.base import Forecaster
 from battery_optimisation.forecast.baselines import WithAncillary, WithAncillaryPersistence
 from battery_optimisation.forecast.perfect import PerfectForecaster
 from battery_optimisation.forecast.stored import AncillaryQuantileForecaster, QuantileForecaster
-from battery_optimisation.sim.backtest import RunSummary, StrategyName, run_strategy, save_run
+from battery_optimisation.sim.backtest import (
+    RunFiles,
+    RunSummary,
+    StrategyName,
+    run_strategy,
+    save_run,
+)
 from battery_optimisation.sim.clearing import Side
 from battery_optimisation.sim.dispatch import Dispatch
 from battery_optimisation.sim.simulator import ShortfallPolicy
@@ -77,6 +91,7 @@ class BiddingEvaluation:
     report: BiddingReport
     runs: dict[StrategyName, tuple[RunSummary, Dispatch]]
     water_value: WaterValueStrategy
+    plans: dict[StrategyName, pl.DataFrame] = field(default_factory=dict)  # record_plans
 
 
 def _offer_stats(strategy: WaterValueStrategy, market: MarketConfig) -> tuple[float, float]:
@@ -120,25 +135,44 @@ def evaluate_bidding(
         if ancillary and ancillary_quantiles is not None
         else None
     )
+    # the water value plans reserves on the median or the mean (``ancillary_price``)
+    planned = stored
+    if stored is not None and bidding.ancillary_price is AncillaryPrice.MEAN:
+        planned = AncillaryQuantileForecaster(ancillary_quantiles, level=None)
+    # reserve price states (reserve planner sdp): factor lattice of the ancillary quantiles
+    lattices = None
+    if (
+        stored is not None
+        and bidding.reserve_prices is ReservePrices.MARKOV
+        and bidding.reserve_planner is ReservePlanner.SDP
+    ):
+        lattices = ReserveLattices(
+            ancillary_quantiles, market, bidding.reserve_markov, tuple(market.ancillary_products)
+        )
     water_value = WaterValueStrategy(
         stage_source(scenarios, quantiles, bidding, copula_lag1),
         battery,
         market,
         bidding,
         ancillary=ancillary,
-        ancillary_forecaster=stored,
+        ancillary_forecaster=planned,
+        reserve_lattices=lattices,
     )
     median: Forecaster = QuantileForecaster(quantiles, level=0.5)
     if ancillary:
         median = WithAncillary(median, stored) if stored else WithAncillaryPersistence(median)
     strategies = {
         StrategyName.PERFECT_FORESIGHT: ScheduleStrategy(
-            PerfectForecaster(prices), battery, market, days
+            PerfectForecaster(prices), battery, market, days, bidding.record_plans
         ),
-        StrategyName.CHRONOS_MEDIAN: ScheduleStrategy(median, battery, market, days),
+        StrategyName.CHRONOS_MEDIAN: ScheduleStrategy(
+            median, battery, market, days, bidding.record_plans
+        ),
         StrategyName.WATER_VALUE: water_value,
     }
-    probabilistic = bidding.feasibility.mode is FeasibilityMode.PROBABILISTIC
+    # worst-case offers are feasible by construction (a shortfall is a bug: raise); the others
+    # may clear more than the SOC allows when the engine does not enforce it: penalised
+    capped = bidding.feasibility.mode is FeasibilityMode.WORST_CASE
     runs = {
         name: run_strategy(
             name,
@@ -149,7 +183,7 @@ def evaluate_bidding(
             market,
             history=history,
             on_shortfall=ShortfallPolicy.PENALISE
-            if name is StrategyName.WATER_VALUE and probabilistic
+            if name is StrategyName.WATER_VALUE and not capped
             else ShortfallPolicy.RAISE,
         )
         for name, strategy in strategies.items()
@@ -198,16 +232,58 @@ def evaluate_bidding(
         shortfall_mwh=wv.total.shortfall_mwh,
         penalty_sgd=wv.total.penalty_sgd,
     )
-    return BiddingEvaluation(report=report, runs=runs, water_value=water_value)
+    plans = {name: s.plans() for name, s in strategies.items()} if bidding.record_plans else {}
+    return BiddingEvaluation(report=report, runs=runs, water_value=water_value, plans=plans)
+
+
+def with_sweep(ev: BiddingEvaluation, stats, steps) -> BiddingEvaluation:
+    """The evaluation with the price-sweep check in its report (every other field kept)."""
+    return replace(ev, report=ev.report.model_copy(update={"sweep": stats, "sweep_steps": steps}))
+
+
+BIDDING_DIR = "bidding"  # inside a forecast run: bidding/<tag>/<timestamp>/
+LATEST = "latest"
+
+
+def new_bidding_dir(forecast_run: Path, tag: str, now: datetime | None = None) -> Path:
+    """A new folder for one bidding run (never overwrites an earlier one), and ``latest``
+    beside it pointing at it."""
+    now = now or datetime.now(ZoneInfo(TZ))
+    parent = Path(forecast_run) / BIDDING_DIR / tag
+    out = parent / now.strftime("%Y%m%d-%H%M")
+    k = 1
+    while out.exists():
+        out = parent / f"{now:%Y%m%d-%H%M}-{k}"
+        k += 1
+    out.mkdir(parents=True)
+    link = parent / LATEST
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(out.name)
+    return out
+
+
+def list_bidding_runs(forecast_run: Path) -> list[Path]:
+    """Every saved bidding run of a forecast run (new layout), newest first."""
+    runs = [
+        p.parent
+        for p in (Path(forecast_run) / BIDDING_DIR).glob("*/*/report.json")
+        if p.parent.name != LATEST
+    ]
+    return sorted(runs, key=lambda p: p.name, reverse=True)
 
 
 def save_bidding(ev: BiddingEvaluation, out_dir: Path) -> Path:
-    """``report.json`` + one backtest folder per strategy under ``out_dir``."""
+    """``report.json``, the water value's decision trace (``decisions.parquet``) and one
+    backtest folder per strategy (dispatch + submitted offers) under ``out_dir``."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "report.json").write_text(ev.report.model_dump_json(indent=2))
-    for summary, dispatch in ev.runs.values():
-        save_run(summary, dispatch, out_dir / "backtests")
+    ev.water_value.decisions().write_parquet(out_dir / "decisions.parquet")
+    for name, (summary, dispatch) in ev.runs.items():
+        folder = save_run(summary, dispatch, out_dir / "backtests")
+        if name in ev.plans:
+            ev.plans[name].write_parquet(folder / RunFiles.PLANS)
     return out_dir
 
 

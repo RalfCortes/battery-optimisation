@@ -21,3 +21,22 @@ def test_perfect_foresight_runs_with_every_horizon(battery_cfg, market_cfg, hori
     )
     assert dispatch.profit_sgd > 0
     assert summary.horizon is horizon
+
+
+def test_saved_runs_keep_the_offers(battery_cfg, market_cfg, tmp_path) -> None:
+    import polars as pl
+
+    from battery_optimisation.sim.backtest import RunFiles, save_run
+
+    prices = make_prices(daily_shape(1, seed=2))
+    summary, dispatch = run_schedule(
+        StrategyName.PERFECT_FORESIGHT,
+        PerfectForecaster(prices),
+        prices,
+        battery_cfg,
+        market_cfg,
+        Horizon.DAY,
+    )
+    run_dir = save_run(summary, dispatch, tmp_path)
+    saved = pl.read_parquet(run_dir / RunFiles.OFFERS)
+    assert saved.height == dispatch.offers.height > 0

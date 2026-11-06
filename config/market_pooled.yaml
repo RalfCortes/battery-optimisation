@@ -1,0 +1,57 @@
+# Singapore NEMS market parameters, pooled reserve rules (comparison only; default: market.yaml). Units: MW, MWh, SGD/MWh, hours.
+# Values marked TODO must be checked against the challenge rules.
+
+timezone: Asia/Singapore     # interval-start convention
+interval_h: 0.5              # 30-minute dispatch/pricing intervals
+intervals_per_day: 48
+
+gate_closure_intervals: 2    # offers for interval t are fixed at the start of t-2 (NEMS ~65 min)
+
+# Cleared energy the battery cannot deliver. Safety net: with storage_rules.enforce_soc the market
+# engine already caps schedules to the SoC, so this only bites if a shortfall still happens.
+shortfall_penalty:
+  enabled: true
+  sgd_per_mwh: 4500.0          # TODO: confirm (NEMS: no payment + deviation penalties)
+
+# Offer format (Market Rules ch. 6): one storage offer of up to 10 price-quantity pairs in increasing
+# price order, 1-5 charging and 6-10 discharging (5.2B.2.4) -> 5 per side; reserve offers (per class)
+# and regulation offers: 1-5 pairs (5.3.2.5, 5.4.3.4). Prices $/MWh to 2 decimals, MW to 1 decimal.
+n_tranches: 5                # K per side (energy) and per ancillary product
+price_decimals: 2
+quantity_decimals: 1
+
+price_floor: -4500.0         # SGD/MWh (TODO: confirm)
+price_cap: 4500.0            # SGD/MWh (TODO: confirm)
+
+products:
+  energy: true
+  regulation: true
+  primary_reserve: true
+  contingency_reserve: true
+
+# Pooled reserve rules (before NEMS RC383/RC386): all raise reserves share the power headroom,
+# energy held per MW: primary 10 min, contingency 30 min, regulation 15 min each way (assumed),
+# from the SOC at the start and at the end of the interval; the engine ignores the SoC.
+storage_rules:
+  enforce_soc: false
+  raise_power_groups:
+    - [regulation, primary_reserve, contingency_reserve]
+  lower_power_groups:
+    - [regulation]
+  discharge_checks:
+    - {regulation: 0.25, primary_reserve: 0.1666666667, contingency_reserve: 0.5}             # start
+    - {energy: 0.5, regulation: 0.25, primary_reserve: 0.1666666667, contingency_reserve: 0.5}  # end
+  charge_checks:
+    - {regulation: 0.25}
+    - {energy: 0.5, regulation: 0.25}
+
+# Ancillary services (sim/clearing.py, optim/milp.py). All TODO: confirm with the challenge rules.
+ancillary:
+  reserve_group: A               # NEMS reserve group whose prices apply to the battery
+  regulation_energy:             # AGC energy per MW of regulation, share of MW x interval (TODO:
+    up: 0.05                     # no public AGC data; total 0.1 as before). up: injected,
+    down: 0.05                   # down: withdrawn; settled at USEP, moves the SoC, adds wear
+  max_award_mw:                  # cap per product: Singapore requirements are small, price-taking
+    regulation: 100.0            # may not hold for a 100 MW battery
+    primary_reserve: 100.0
+    contingency_reserve: 100.0

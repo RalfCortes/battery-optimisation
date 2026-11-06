@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import polars as pl
 
@@ -23,6 +23,8 @@ class Dispatch:
     frame: pl.DataFrame
     battery: BatteryConfig
     market: MarketConfig
+    # every submitted tranche: INTERVAL_START, PRODUCT, SIDE, TRANCHE, OFFER_PRICE, OFFER_MW
+    offers: pl.DataFrame = field(default_factory=pl.DataFrame)
 
     @property
     def profit_sgd(self) -> float:

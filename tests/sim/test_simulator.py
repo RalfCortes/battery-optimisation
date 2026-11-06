@@ -2,7 +2,13 @@ from datetime import timedelta
 
 import polars as pl
 import pytest
-from synthetic import FixedStrategy, daily_shape, make_prices
+from synthetic import (
+    FixedStrategy,
+    daily_shape,
+    make_prices,
+    without_shortfall_penalty,
+    without_soc_enforcement,
+)
 
 from battery_optimisation.battery import Battery, LimitBreachError
 from battery_optimisation.columns import Col
@@ -49,6 +55,7 @@ def test_simulator_never_shows_a_strategy_the_future(market_cfg, battery_cfg) ->
 
 
 def test_infeasible_offers_raise(market_cfg, battery_cfg) -> None:
+    market_cfg = without_soc_enforcement(market_cfg)  # else the engine cuts them (RC386)
     m = Market(market_cfg, make_prices([100.0] * 3))
     strategy = FixedStrategy([0.0] * 3, [100.0] * 3, market_cfg)  # 50 MWh cannot cover it
     with pytest.raises(LimitBreachError, match="soc"):
@@ -87,6 +94,7 @@ def test_offers_are_fixed_at_gate_closure(market_cfg, battery_cfg) -> None:
 def test_shortfall_is_penalised_instead_of_raising(market_cfg, battery_cfg) -> None:
     from battery_optimisation.sim.simulator import ShortfallPolicy
 
+    market_cfg = without_soc_enforcement(market_cfg)
     m = Market(market_cfg, make_prices([100.0] * 3))
     strategy = FixedStrategy([0.0] * 3, [100.0] * 3, market_cfg)  # 50 MWh cannot cover it
     dispatch = Simulator(m, Battery(battery_cfg), on_shortfall=ShortfallPolicy.PENALISE).run(
@@ -97,8 +105,53 @@ def test_shortfall_is_penalised_instead_of_raising(market_cfg, battery_cfg) -> N
     shortfall_mwh = (frame[Col.SHORTFALL_MW] * market_cfg.interval_h).sum()
     assert shortfall_mwh > 0
     assert frame[Col.PENALTY_SGD].sum() == pytest.approx(
-        shortfall_mwh * market_cfg.shortfall_penalty_sgd_per_mwh
+        shortfall_mwh * market_cfg.shortfall_penalty.sgd_per_mwh
     )
     delivered = (frame[Col.DISCHARGE_MW] * market_cfg.interval_h).sum()
     assert delivered + shortfall_mwh == pytest.approx(3 * 100.0 * market_cfg.interval_h)
     assert dispatch.total().shortfall_mwh == pytest.approx(shortfall_mwh)
+
+
+def test_disabled_penalty_books_the_shortfall_at_no_cost(market_cfg, battery_cfg) -> None:
+    from battery_optimisation.sim.simulator import ShortfallPolicy
+
+    market_cfg = without_shortfall_penalty(without_soc_enforcement(market_cfg))
+    m = Market(market_cfg, make_prices([100.0] * 3))
+    strategy = FixedStrategy([0.0] * 3, [100.0] * 3, market_cfg)
+    dispatch = Simulator(m, Battery(battery_cfg), on_shortfall=ShortfallPolicy.PENALISE).run(
+        strategy
+    )
+    assert dispatch.total().shortfall_mwh > 0
+    assert dispatch.frame[Col.PENALTY_SGD].sum() == 0.0
+
+
+def test_engine_cuts_infeasible_energy_to_the_soc(market_cfg, battery_cfg) -> None:
+    """RC386: the engine schedules only what the SoC allows, so there is nothing to penalise."""
+    m = Market(market_cfg, make_prices([100.0] * 3))
+    strategy = FixedStrategy([0.0] * 3, [100.0] * 3, market_cfg)
+    dispatch = Simulator(m, Battery(battery_cfg)).run(strategy)  # RAISE: would fail if not cut
+    frame = dispatch.frame
+    assert frame[Col.SHORTFALL_MW].sum() == 0.0
+    assert frame[Col.SOC_CUT_MW].sum() > 0
+    gain = battery_cfg.soc_init * battery_cfg.eta_d / market_cfg.interval_h  # MW the SoC allows
+    assert frame[Col.DISCHARGE_MW][0] == pytest.approx(min(100.0, gain))
+    assert frame[Col.SOC_MWH].min() >= battery_cfg.soc_min - 1e-9
+
+
+def test_dispatch_keeps_every_submitted_offer(market_cfg, battery_cfg, tmp_path) -> None:
+    """Every tranche the strategy submitted is kept (offers.parquet) to explain a settlement."""
+    m = Market(market_cfg, make_prices([100.0] * 3))
+    strategy = FixedStrategy([0.0, 20.0, 0.0], [30.0, 0.0, 0.0], market_cfg)
+    dispatch = Simulator(m, Battery(battery_cfg)).run(strategy)
+    offers = dispatch.offers
+    assert offers.columns == [
+        Col.INTERVAL_START,
+        Col.PRODUCT,
+        Col.SIDE,
+        Col.TRANCHE,
+        Col.OFFER_PRICE,
+        Col.OFFER_MW,
+    ]
+    assert offers.height == 2
+    assert offers.filter(pl.col(Col.SIDE) == "discharge")[Col.OFFER_MW].to_list() == [30.0]
+    assert set(offers[Col.PRODUCT].to_list()) == {"energy"}

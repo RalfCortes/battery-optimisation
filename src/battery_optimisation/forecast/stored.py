@@ -1,4 +1,5 @@
-"""Adapter: stored quantile forecasts -> ``Forecaster`` (one quantile level as a point forecast)."""
+"""Adapter: stored quantile forecasts -> ``Forecaster`` (one quantile level, or the mean, as a
+point forecast)."""
 
 from __future__ import annotations
 
@@ -13,11 +14,29 @@ from battery_optimisation.sim.clearing import MarketView
 _LEVEL_TOL = 1e-9
 
 
-class QuantileForecaster:
-    """Uses the latest forecast issued at or before the decision time (never a later one)."""
+def quantile_mean(quantiles: pl.DataFrame) -> pl.DataFrame:
+    """Mean of each forecast distribution (per issue and interval) from its quantiles: the
+    integral of the quantile function, trapezoids between levels, flat beyond the extremes."""
+    keys = [Col.ISSUED_AT, Col.INTERVAL_START]
+    q = quantiles.sort(*keys, Col.QUANTILE)
+    u, v = pl.col(Col.QUANTILE), pl.col(Col.USEP_FORECAST)
+    du, mid = u - u.shift(1).over(keys), (v + v.shift(1).over(keys)) / 2
+    return q.group_by(keys).agg(
+        ((du * mid).sum() + u.first() * v.first() + (1 - u.last()) * v.last()).alias(
+            Col.USEP_FORECAST
+        )
+    )
 
-    def __init__(self, quantiles: pl.DataFrame, level: float = 0.5) -> None:
-        selected = quantiles.filter((pl.col(Col.QUANTILE) - level).abs() < _LEVEL_TOL)
+
+class QuantileForecaster:
+    """Uses the latest forecast issued at or before the decision time (never a later one).
+    ``level``: the quantile used as the point forecast; ``None``: the mean."""
+
+    def __init__(self, quantiles: pl.DataFrame, level: float | None = 0.5) -> None:
+        if level is None:
+            selected = quantile_mean(quantiles)
+        else:
+            selected = quantiles.filter((pl.col(Col.QUANTILE) - level).abs() < _LEVEL_TOL)
         if selected.is_empty():
             raise ValueError(f"quantile level {level} not in the forecasts")
         self.level = level
@@ -44,9 +63,9 @@ class QuantileForecaster:
 
 class AncillaryQuantileForecaster:
     """Stored ancillary price forecasts (``Col.TARGET`` = price column): one column per target,
-    from the latest issue at or before the decision time."""
+    from the latest issue at or before the decision time (``level``: quantile, ``None``: mean)."""
 
-    def __init__(self, quantiles: pl.DataFrame, level: float = 0.5) -> None:
+    def __init__(self, quantiles: pl.DataFrame, level: float | None = 0.5) -> None:
         self._by_target = {
             key[0]: QuantileForecaster(part, level)
             for key, part in quantiles.partition_by(Col.TARGET, as_dict=True).items()

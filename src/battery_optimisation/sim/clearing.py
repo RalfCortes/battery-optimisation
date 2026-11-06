@@ -12,6 +12,7 @@ of earlier intervals only.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -110,7 +111,8 @@ class IntervalOffers(BaseModel):
             for p, mw in (awards or {}).items()
             if mw > 0
         )
-        return cls(interval_start=interval_start, tranches=tuple(tranches), ancillary=ancillary)
+        offers = cls(interval_start=interval_start, tranches=tuple(tranches), ancillary=ancillary)
+        return conform(offers, market)
 
     def on(self, side: Side) -> list[Tranche]:
         return [t for t in self.tranches if t.side is side]
@@ -124,6 +126,31 @@ class Cleared:
     discharge_mw: float
     awards: dict[Product, float] = field(default_factory=dict)  # ancillary MW
     ancillary_prices: dict[Product, float] = field(default_factory=dict)
+
+
+def _has_decimals(value: float, decimals: int) -> bool:
+    return abs(value * 10**decimals - round(value * 10**decimals)) < 1e-6
+
+
+def conform(offers: IntervalOffers, market: MarketConfig) -> IntervalOffers:
+    """Offers in the market's format: prices rounded to ``price_decimals``, quantities rounded
+    down to ``quantity_decimals`` (never offer more than computed), empty pairs dropped."""
+    scale = 10**market.quantity_decimals
+
+    def mw(q: float) -> float:
+        return math.floor(q * scale + 1e-6) / scale
+
+    tranches = tuple(
+        t.model_copy(update={"price": round(t.price, market.price_decimals), "quantity_mw": q})
+        for t in offers.tranches
+        if (q := mw(t.quantity_mw)) > 0
+    )
+    ancillary = tuple(
+        t.model_copy(update={"price": round(t.price, market.price_decimals), "quantity_mw": q})
+        for t in offers.ancillary
+        if (q := mw(t.quantity_mw)) > 0
+    )
+    return offers.model_copy(update={"tranches": tranches, "ancillary": ancillary})
 
 
 def check_prices(prices: pl.DataFrame, market: MarketConfig) -> None:
@@ -207,6 +234,8 @@ class Market:
         return MarketView(self._known, self._offset + index, self.config.gate_closure_intervals)
 
     def validate(self, offers: IntervalOffers) -> None:
+        """Offer format of the Market Rules (ch. 6 5.2B, 5.3, 5.4): pair counts, price limits,
+        decimals, and one storage offer in increasing price order (charge before discharge)."""
         cfg = self.config
         for side in Side:
             if len(offers.on(side)) > cfg.n_tranches:
@@ -214,6 +243,16 @@ class Market:
         for t in offers.tranches:
             if not cfg.price_floor <= t.price <= cfg.price_cap:
                 raise ValueError(f"offer price {t.price} outside [floor, cap]")
+        for t in (*offers.tranches, *offers.ancillary):
+            if not _has_decimals(t.price, cfg.price_decimals):
+                raise ValueError(f"price {t.price} has more than {cfg.price_decimals} decimals")
+            if not _has_decimals(t.quantity_mw, cfg.quantity_decimals):
+                raise ValueError(
+                    f"quantity {t.quantity_mw} has more than {cfg.quantity_decimals} decimals"
+                )
+        charge, discharge = offers.on(Side.CHARGE), offers.on(Side.DISCHARGE)
+        if charge and discharge and max(t.price for t in charge) > min(t.price for t in discharge):
+            raise ValueError("storage offer pairs must be in increasing price order")
         for product in {t.product for t in offers.ancillary}:
             if sum(t.product is product for t in offers.ancillary) > cfg.n_tranches:
                 raise ValueError(f"more than {cfg.n_tranches} {product} tranches")

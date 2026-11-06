@@ -1,0 +1,518 @@
+<title>Settlement Explorer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: summary strip; day controls + SoC; one card per market (price + MW); interval detail (offer curve + settlement by market). */
+:root {
+  --bg: #f4f6f9; --panel: #ffffff; --ink: #172033; --muted: #5b6678; --line: #dde2ea; --grid: #edf0f5;
+  --wv: #1f63b5; --ss: #c0661a; --pf: #6f7a8a; --price: #172033; --sel: rgba(31, 99, 181, .12);
+  --band: rgba(31, 99, 181, .13); --good: #1d7a4d; --bad: #b3261e;
+  --sans: "IBM Plex Sans", "Segoe UI", Arial, sans-serif; --mono: "IBM Plex Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f141d; --panel: #171e2a; --ink: #e6ebf3; --muted: #9aa6b8; --line: #2a3445; --grid: #1f2836;
+  --wv: #6ea8f0; --ss: #f0a25e; --pf: #a2adbd; --price: #e6ebf3; --sel: rgba(110, 168, 240, .16);
+  --band: rgba(110, 168, 240, .16); --good: #5cc28d; --bad: #f08a80; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f141d; --panel: #171e2a; --ink: #e6ebf3; --muted: #9aa6b8; --line: #2a3445; --grid: #1f2836;
+  --wv: #6ea8f0; --ss: #f0a25e; --pf: #a2adbd; --price: #e6ebf3; --sel: rgba(110, 168, 240, .16);
+  --band: rgba(110, 168, 240, .16); --good: #5cc28d; --bad: #f08a80; color-scheme: dark }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px; }
+.wrap { max-width: 1280px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px;
+  padding-block: 20px 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1 { font-size: 22px; font-weight: 600; margin: 0; text-wrap: balance; }
+h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.sub { color: var(--muted); font-size: 13px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+tr.group td { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding-top: 12px; border-bottom: 1px solid var(--line); }
+tr.total td { font-weight: 600; }
+.scroll { overflow-x: auto; }
+.key { display: inline-flex; align-items: center; gap: 6px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.swatch { width: 18px; height: 10px; border-radius: 2px; display: inline-block; background: var(--band); }
+.dash { width: 18px; height: 0; border-top: 2px dashed var(--muted); display: inline-block; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.controls label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+input, select, button { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+button { cursor: pointer; }
+button:hover { border-color: var(--wv); }
+:focus-visible { outline: 2px solid var(--wv); outline-offset: 2px; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+.mhead { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; }
+.mday { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
+svg text { fill: var(--muted); font-family: var(--mono); font-size: 11px; }
+svg text.title { fill: var(--ink); font-family: var(--sans); font-size: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); }
+.pill { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.cut { color: var(--bad); border-color: var(--bad); }
+.pill.ok { color: var(--good); border-color: var(--good); }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.fact { display: flex; flex-direction: column; gap: 2px; }
+.fact b { font-family: var(--mono); font-weight: 500; font-size: 15px; }
+.fact span { color: var(--muted); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header style="display:flex;flex-direction:column;gap:4px">
+    <h1>Settlement Explorer</h1>
+    <div class="sub" id="meta"></div>
+  </header>
+
+  <section class="panel">
+    <h2>Whole run, by market (SGD)</h2>
+    <div class="scroll"><table id="totals"></table></div>
+  </section>
+
+  <section class="panel">
+    <div class="controls">
+      <label for="day">Day <input type="date" id="day"></label>
+      <label for="slot">Interval start <select id="slot"></select></label>
+      <button id="prev" type="button" aria-label="Previous interval">◀ Prev</button>
+      <button id="next" type="button" aria-label="Next interval">Next ▶</button>
+      <label for="focus">Offers of <select id="focus"></select></label>
+      <button id="worst" type="button">Jump to largest gap vs perfect foresight</button>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div id="soc-chart"></div>
+    <div class="sub">Click any chart to pick an interval. Arrow keys step one interval.</div>
+  </section>
+
+  <section class="grid2" id="markets"></section>
+
+  <section class="grid2">
+    <div class="panel">
+      <h2 id="curve-title">Energy offer curve</h2>
+      <div id="curve"></div>
+      <div class="legend" id="curve-legend"></div>
+      <div class="scroll"><table id="tranches"></table></div>
+    </div>
+    <div class="panel">
+      <h2 id="cmp-title">Settlement by market</h2>
+      <div class="scroll"><table id="compare"></table></div>
+      <h2>Water value decision (SDP)</h2>
+      <div class="facts" id="decision"></div>
+    </div>
+  </section>
+
+  <section class="panel" id="asof">
+    <div class="mhead">
+      <h2 id="asof-title">At gate closure</h2>
+      <div class="controls">
+        <label for="asof-strategy">Strategy <select id="asof-strategy">
+          <option value="water_value">Water value</option>
+          <option value="chronos_median">Self-schedule</option>
+          <option value="all">All (with perfect foresight)</option>
+        </select></label>
+        <label class="key" for="hindsight"><input type="checkbox" id="hindsight" checked> Show what happened after gate closure</label>
+      </div>
+    </div>
+    <div class="sub" id="asof-sub"></div>
+    <div class="facts" id="asof-facts"></div>
+    <div class="legend" id="asof-legend"></div>
+    <div id="asof-energy"></div>
+    <div class="sub" id="asof-status"></div>
+  </section>
+  <section class="grid2" id="asof-reserves"></section>
+</div>
+
+<script id="data" type="application/json">/*__DATA__*/</script>
+<script>
+(() => {
+const D = JSON.parse(document.getElementById("data").textContent);
+const M = D.meta, N = M.intervals, PER = M.per_day, DT = M.interval_h;
+const S = M.strategies, COLOR = { water_value: "var(--wv)", chronos_median: "var(--ss)", perfect_foresight: "var(--pf)" };
+const PRODUCTS = ["energy", "regulation", "primary_reserve", "contingency_reserve"];
+const RES = PRODUCTS.slice(1).filter(p => D.prices[p]);
+const PNAME = { energy: "Energy", regulation: "Regulation", primary_reserve: "Primary reserve", contingency_reserve: "Contingency reserve" };
+const MWKEY = { regulation: "reg", primary_reserve: "pri", contingency_reserve: "con" };
+const fmt = (v, d = 0) => v === null || v === undefined || Number.isNaN(v) ? "–" : Number(v).toLocaleString("en-SG", { minimumFractionDigits: d, maximumFractionDigits: d });
+const startDate = new Date(M.start + "T00:00:00Z");
+const dayStr = d => new Date(startDate.getTime() + d * 864e5).toISOString().slice(0, 10);
+const hhmm = k => String(Math.floor(k * DT)).padStart(2, "0") + ":" + String(Math.round((k * DT % 1) * 60)).padStart(2, "0");
+const days = Math.ceil(N / PER);
+
+// offers by interval: start offset per strategy
+const OFF = {};
+for (const s of S) {
+  const o = D.offers[s.key]; if (!o) continue;
+  const first = new Int32Array(N + 1).fill(-1), counts = new Int32Array(N);
+  o.i.forEach(i => counts[i]++);
+  let acc = 0; for (let i = 0; i < N; i++) { first[i] = acc; acc += counts[i]; } first[N] = acc;
+  OFF[s.key] = { o, first };
+}
+const offersAt = (key, i) => {
+  const x = OFF[key]; if (!x) return [];
+  const out = []; for (let j = x.first[i]; j < x.first[i + 1]; j++)
+    out.push({ product: PRODUCTS[x.o.product[j]], side: x.o.side[j], price: x.o.price[j], mw: x.o.mw[j] });
+  return out;
+};
+const offeredMw = (key, i, product) => OFF[key] ? offersAt(key, i).filter(t => t.product === product).reduce((a, t) => a + t.mw, 0) : null;
+
+// settlement per market, per interval (SGD): energy schedule and regulation energy at USEP, availability price × MW × Δ
+const dd = k => D.dispatch[k];
+const sched = (k, i) => D.usep[i] * (dd(k).discharge[i] - dd(k).charge[i]) * DT;
+const regEnergy = (k, i) => D.usep[i] * (dd(k).reg_net[i] || 0);
+const avail = (k, i, p) => (dd(k)[MWKEY[p]][i] || 0) * (D.prices[p][i] || 0) * DT;
+const states = i => M.states && D.decisions.states ? D.decisions.states.slice(i * M.states, (i + 1) * M.states).filter(v => v !== null) : [];
+
+// state
+let idx = 0, focus = S[0].key;
+try { const saved = JSON.parse(localStorage.getItem("explorer") || "{}"); if (saved.idx < N) idx = saved.idx; if (saved.focus) focus = saved.focus; } catch (e) {}
+const save = () => { try { localStorage.setItem("explorer", JSON.stringify({ idx, focus })); } catch (e) {} };
+
+// header + totals by market
+document.getElementById("meta").textContent =
+  `${M.forecast_run} · run ${M.run} · ${M.start}, ${days} days · feasibility ${M.feasibility} · reserve planner ${M.reserve_planner}`;
+const tot = M.totals, pf = tot.perfect_foresight ? tot.perfect_foresight.profit : null;
+const runSums = {};
+for (const s of S) {
+  const r = { sched: 0, regE: 0, wear: 0, pen: 0 }; RES.forEach(p => r[p] = 0);
+  for (let i = 0; i < N; i++) { r.sched += sched(s.key, i); r.regE += regEnergy(s.key, i); r.wear += dd(s.key).degradation[i] || 0; r.pen += dd(s.key).penalty[i] || 0; RES.forEach(p => r[p] += avail(s.key, i, p)); }
+  runSums[s.key] = r;
+}
+document.getElementById("totals").innerHTML =
+  `<tr><th>Strategy</th><th>Energy</th>${RES.length ? "<th>Regulation energy</th>" : ""}${RES.map(p => `<th>${PNAME[p]}</th>`).join("")}<th>Wear</th><th>Profit</th><th>Share of PF</th><th>Cycles / day</th><th>Engine cuts (MWh)</th></tr>` +
+  S.map(s => { const t = tot[s.key], r = runSums[s.key]; return `<tr><td><span class="key"><span class="dot" style="background:${COLOR[s.key]}"></span>${s.label}</span></td>
+    <td class="num">${fmt(r.sched)}</td>${RES.length ? `<td class="num">${fmt(r.regE)}</td>` : ""}${RES.map(p => `<td class="num">${fmt(r[p])}</td>`).join("")}
+    <td class="num">${fmt(-r.wear)}</td><td class="num"><b>${fmt(t.profit)}</b></td>
+    <td class="num">${pf ? (100 * t.profit / pf).toFixed(1) + "%" : "–"}</td><td class="num">${fmt(t.cycles_per_day, 2)}</td><td class="num">${fmt(t.cut_mwh)}</td></tr>`; }).join("");
+document.getElementById("legend").innerHTML = S.map(s => `<span class="key"><span class="dot" style="background:${COLOR[s.key]}"></span>${s.label}</span>`).join("") +
+  `<span class="key"><span class="dot" style="background:var(--price)"></span>Realised price</span>` +
+  `<span class="key"><span class="dash"></span>MW offered (strategy picked in “Offers of”)</span>` +
+  (M.states ? `<span class="key"><span class="swatch"></span>SDP price states, low–high (water value)</span>` : "");
+
+// controls
+const dayIn = document.getElementById("day"), slotIn = document.getElementById("slot"), focusIn = document.getElementById("focus");
+dayIn.min = dayStr(0); dayIn.max = dayStr(days - 1);
+slotIn.innerHTML = Array.from({ length: PER }, (_, k) => `<option value="${k}">${hhmm(k)}</option>`).join("");
+focusIn.innerHTML = S.filter(s => OFF[s.key]).map(s => `<option value="${s.key}">${s.label}</option>`).join("");
+dayIn.addEventListener("change", () => { const d = Math.round((new Date(dayIn.value + "T00:00:00Z") - startDate) / 864e5); if (d >= 0 && d < days) { idx = Math.min(N - 1, d * PER + idx % PER); render(); } });
+slotIn.addEventListener("change", () => { idx = Math.min(N - 1, Math.floor(idx / PER) * PER + Number(slotIn.value)); render(); });
+focusIn.addEventListener("change", () => { focus = focusIn.value; render(); });
+document.getElementById("prev").addEventListener("click", () => { idx = Math.max(0, idx - 1); render(); });
+document.getElementById("next").addEventListener("click", () => { idx = Math.min(N - 1, idx + 1); render(); });
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.key === "ArrowLeft") { idx = Math.max(0, idx - 1); render(); }
+  if (e.key === "ArrowRight") { idx = Math.min(N - 1, idx + 1); render(); }
+});
+document.getElementById("worst").addEventListener("click", () => {
+  const a = D.dispatch.water_value.profit, b = (D.dispatch.perfect_foresight || D.dispatch.water_value).profit;
+  let best = 0, gap = -Infinity; for (let i = 0; i < N; i++) { const g = (b[i] || 0) - (a[i] || 0); if (g > gap) { gap = g; best = i; } }
+  idx = best; render();
+});
+
+// svg helpers
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs, text) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text !== undefined) e.textContent = text; return e; };
+const niceTicks = (lo, hi, n = 4) => { const span = hi - lo || 1, step0 = span / n, mag = 10 ** Math.floor(Math.log10(step0)), step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0);
+  const t = []; for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) t.push(+v.toFixed(6)); return t; };
+
+// one day of step lines; series: {values, color, width, dash}; band: {lo[], hi[]} shaded behind
+function smallChart(title, series, d0, opts = {}) {
+  const W = opts.W || 1000, H = opts.H || 140, L = 58, R = 10, T = 20, B = 20, w = W - L - R, h = H - T - B;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img", "aria-label": title });
+  const all = series.flatMap(s => s.values.filter(v => v !== null));
+  if (opts.band && !opts.bandOutOfScale) all.push(...opts.band.lo.filter(v => v !== null), ...opts.band.hi.filter(v => v !== null));
+  if (!all.length) all.push(0);
+  let lo = Math.min(...all, opts.zero ? 0 : Infinity), hi = Math.max(...all, opts.zero ? 0 : -Infinity);
+  if (opts.lo !== undefined) lo = opts.lo; if (opts.hi !== undefined) hi = opts.hi;
+  if (hi - lo < 1e-9) { hi += 1; lo -= opts.zero && lo === 0 ? 0 : 1; }
+  const cw = w / PER, x = k => L + (k + 0.5) * cw, y = v => T + h - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * h;
+  const sel = idx - d0 * PER;
+  if (sel >= 0 && sel < PER) svg.append(el("rect", { x: L + sel * cw, y: T, width: cw, height: h, fill: "var(--sel)" }));
+  for (const t of niceTicks(lo, hi, opts.ticks || 3)) { svg.append(el("line", { x1: L, x2: W - R, y1: y(t), y2: y(t), stroke: "var(--grid)", "stroke-width": 1 }));
+    svg.append(el("text", { x: L - 6, y: y(t) + 4, "text-anchor": "end" }, fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0))); }
+  if (opts.zero && lo < 0) svg.append(el("line", { x1: L, x2: W - R, y1: y(0), y2: y(0), stroke: "var(--muted)", "stroke-width": 1 }));
+  for (let k = 0; k < PER; k += opts.W && opts.W < 800 ? 12 : 8) svg.append(el("text", { x: x(k), y: H - 5, "text-anchor": "middle" }, hhmm(k)));
+  svg.append(el("text", { x: L, y: 13, class: "title" }, title));
+  if (opts.band) opts.band.lo.forEach((a, k) => { const b = opts.band.hi[k]; if (a === null || b === null) return;
+    svg.append(el("rect", { x: L + k * cw, y: y(b), width: cw, height: Math.max(1, y(a) - y(b)), fill: "var(--band)" })); });
+  for (const s of series) {
+    let d = ""; s.values.forEach((v, k) => { if (v === null) return; const X0 = L + k * cw, X1 = X0 + cw; d += (d ? "L" : "M") + X0.toFixed(1) + "," + y(v).toFixed(1) + "L" + X1.toFixed(1) + "," + y(v).toFixed(1); });
+    svg.append(el("path", { d, fill: "none", stroke: s.color, "stroke-width": s.width || 2, "stroke-linejoin": "round", ...(s.dash ? { "stroke-dasharray": s.dash } : {}) }));
+  }
+  svg.addEventListener("click", ev => { const r = svg.getBoundingClientRect(); const px = (ev.clientX - r.left) / r.width * W; const k = Math.floor((px - L) / cw); if (k >= 0 && k < PER) { idx = Math.min(N - 1, d0 * PER + k); render(); } });
+  svg.style.cursor = "pointer";
+  return svg;
+}
+
+function dayCharts() {
+  const d0 = Math.floor(idx / PER), a = d0 * PER, b = Math.min(N, a + PER);
+  const slice = arr => { const out = arr.slice(a, b); while (out.length < PER) out.push(null); return out; };
+  const range = (f) => { const out = []; for (let i = a; i < a + PER; i++) out.push(i < b ? f(i) : null); return out; };
+  const socBox = document.getElementById("soc-chart"); socBox.replaceChildren();
+  socBox.append(smallChart("State of charge (MWh, end of interval)", S.map(s => ({ values: slice(dd(s.key).soc), color: COLOR[s.key] })), d0, { lo: 0, hi: M.soc_max, H: 130 }));
+
+  const box = document.getElementById("markets"); box.replaceChildren();
+  const daySum = f => { let v = 0; for (let i = a; i < b; i++) v += f(i); return v; };
+  const card = (product, priceTitle, priceSeries, band, mwTitle, mwSeries, mwOpts, dayRevenue) => {
+    const panel = document.createElement("div"); panel.className = "panel";
+    const head = document.createElement("div"); head.className = "mhead";
+    head.innerHTML = `<h2>${PNAME[product]}</h2><div class="mday">Day revenue: ${S.map(s => `<span class="key"><span class="dot" style="background:${COLOR[s.key]}"></span><span class="num">${fmt(dayRevenue(s.key))}</span></span>`).join("")}</div>`;
+    panel.append(head,
+      smallChart(priceTitle, priceSeries, d0, { W: 620, H: 130, band, bandOutOfScale: false }),
+      smallChart(mwTitle, mwSeries, d0, { W: 620, H: 130, ...mwOpts }));
+    box.append(panel);
+  };
+  const band = M.states ? { lo: range(i => { const s = states(i); return s.length ? s[0] : null; }), hi: range(i => { const s = states(i); return s.length ? s[s.length - 1] : null; }) } : null;
+  card("energy", "USEP (SGD/MWh)", [{ values: slice(D.usep), color: "var(--price)" }], band,
+    "Net power (MW, + discharge, − charge)", S.map(s => ({ values: range(i => dd(s.key).discharge[i] - dd(s.key).charge[i]), color: COLOR[s.key] })),
+    { zero: true, lo: -M.p_max, hi: M.p_max },
+    k => daySum(i => sched(k, i) + regEnergy(k, i)));
+  for (const p of RES) {
+    const mw = MWKEY[p];
+    const offered = OFF[focus] ? [{ values: range(i => offeredMw(focus, i, p)), color: COLOR[focus], width: 1.5, dash: "5 4" }] : [];
+    card(p, `${PNAME[p]} price (SGD/MW/h)`, [{ values: slice(D.prices[p]), color: "var(--price)" }], null,
+      "Cleared MW (dashed: offered)", [...offered, ...S.map(s => ({ values: slice(dd(s.key)[mw]), color: COLOR[s.key] }))],
+      { lo: 0, hi: M.p_max },
+      k => daySum(i => avail(k, i, p)));
+  }
+}
+
+function curveChart() {
+  const offers = offersAt(focus, idx).filter(t => t.product === "energy");
+  const box = document.getElementById("curve"); box.replaceChildren();
+  const W = 600, H = 340, L = 64, R = 16, T = 16, B = 34, w = W - L - R, h = H - T - B;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img", "aria-label": "Offer curve: price against cumulative MW" });
+  const dis = offers.filter(t => t.side === 1).sort((p, q) => p.price - q.price), chg = offers.filter(t => t.side === -1).sort((p, q) => q.price - p.price);
+  const usep = D.usep[idx];
+  const st = focus === "water_value" ? states(idx) : [];
+  const shown = [usep, ...st, ...offers.map(t => t.price).filter(p => p > M.price_floor && p < M.price_cap)];
+  let lo = Math.min(...shown), hi = Math.max(...shown); const pad = (hi - lo) * 0.15 + 10; lo -= pad; hi += pad;
+  const clamp = p => Math.max(lo, Math.min(hi, p));
+  const x = mw => L + (mw + M.p_max) / (2 * M.p_max) * w, y = p => T + h - (clamp(p) - lo) / (hi - lo) * h;
+  for (const t of niceTicks(lo, hi, 5)) { svg.append(el("line", { x1: L, x2: W - R, y1: y(t), y2: y(t), stroke: "var(--grid)" })); svg.append(el("text", { x: L - 6, y: y(t) + 4, "text-anchor": "end" }, fmt(t))); }
+  for (const m of [-M.p_max, -M.p_max / 2, 0, M.p_max / 2, M.p_max]) svg.append(el("text", { x: x(m), y: H - 16, "text-anchor": "middle" }, fmt(m)));
+  svg.append(el("text", { x: L + w / 2, y: H - 2, "text-anchor": "middle" }, "← charge   MW   discharge →"));
+  svg.append(el("line", { x1: x(0), x2: x(0), y1: T, y2: T + h, stroke: "var(--muted)" }));
+  const step = (list, sign) => { let cum = 0, d = ""; for (const t of list) { const x0 = x(sign * cum); cum += t.mw; d += `M${x0.toFixed(1)},${y(t.price).toFixed(1)}L${x(sign * cum).toFixed(1)},${y(t.price).toFixed(1)}`; } return d; };
+  if (st.length) svg.append(el("rect", { x: L, y: y(st[st.length - 1]), width: w, height: Math.max(1, y(st[0]) - y(st[st.length - 1])), fill: "var(--band)" }));
+  svg.append(el("path", { d: step(dis, 1), stroke: COLOR[focus], "stroke-width": 4, fill: "none", "stroke-linecap": "round" }));
+  svg.append(el("path", { d: step(chg, -1), stroke: COLOR[focus], "stroke-width": 4, fill: "none", "stroke-dasharray": "6 4", "stroke-linecap": "round" }));
+  for (const p of st) svg.append(el("line", { x1: L, x2: L + 10, y1: y(p), y2: y(p), stroke: "var(--wv)", "stroke-width": 2 }));
+  svg.append(el("line", { x1: L, x2: W - R, y1: y(usep), y2: y(usep), stroke: "var(--price)", "stroke-width": 1.5, "stroke-dasharray": "3 3" }));
+  svg.append(el("text", { x: W - R, y: y(usep) - 6, "text-anchor": "end" }, `USEP ${fmt(usep, 2)}`));
+  const net = dd(focus).discharge[idx] - dd(focus).charge[idx];
+  svg.append(el("circle", { cx: x(net), cy: y(usep), r: 6, fill: COLOR[focus], stroke: "var(--panel)", "stroke-width": 2 }));
+  box.append(svg);
+  const label = S.find(s => s.key === focus).label;
+  document.getElementById("curve-title").textContent = `Energy offer curve · ${label} · ${dayStr(Math.floor(idx / PER))} ${hhmm(idx % PER)}`;
+  document.getElementById("curve-legend").innerHTML = `<span>Solid: discharge offers · dashed: charge bids · dot: what cleared at USEP</span>` +
+    (st.length ? `<span>Shaded, with ticks: the SDP's ${st.length} price states for this interval</span>` : "") +
+    `<span>Prices at the floor/cap (price-taking) are drawn at the chart edge</span>`;
+  const rows = offersAt(focus, idx);
+  document.getElementById("tranches").innerHTML = "<tr><th>Offer</th><th>Price</th><th>MW</th><th>Realised</th><th>Cleared?</th></tr>" +
+    (rows.length ? PRODUCTS.flatMap(prod => {
+      const list = rows.filter(t => t.product === prod); if (!list.length) return [];
+      const p = prod === "energy" ? usep : (D.prices[prod] || [])[idx];
+      const unit = prod === "energy" ? "SGD/MWh" : "SGD/MW/h";
+      return [`<tr class="group"><td colspan="5">${PNAME[prod]} · ${unit}</td></tr>`, ...list.map(t => {
+        const what = prod === "energy" ? (t.side === 1 ? "Discharge" : "Charge") : "Availability";
+        const clears = prod === "energy" ? (t.side === 1 ? t.price <= p : t.price >= p) : t.price <= p;
+        const tag = t.price <= M.price_floor || t.price >= M.price_cap ? ' <span class="pill">price-taking</span>' : "";
+        return `<tr><td>${what}${tag}</td><td class="num">${fmt(t.price, 2)}</td><td class="num">${fmt(t.mw, 1)}</td><td class="num">${fmt(p, 2)}</td><td>${clears ? '<span class="pill ok">clears</span>' : '<span class="pill">no</span>'}</td></tr>`;
+      })];
+    }).join("") : `<tr><td colspan="5">No offer submitted for this interval.</td></tr>`);
+}
+
+function compare() {
+  const i = idx, prev = i > 0 ? i - 1 : null;
+  const row = (label, f, d = 1, cls = "") => `<tr${cls ? ` class="${cls}"` : ""}><td>${label}</td>${S.map(s => { const v = f(s.key); return `<td class="num">${v === null ? "–" : fmt(v, d)}</td>`; }).join("")}</tr>`;
+  const group = label => `<tr class="group"><td colspan="${S.length + 1}">${label}</td></tr>`;
+  const g = (k, f) => dd(k)[f][i];
+  const startSoc = k => prev === null ? M.soc_init : dd(k).soc[prev];
+  document.getElementById("cmp-title").textContent = `Settlement by market · ${dayStr(Math.floor(i / PER))} ${hhmm(i % PER)}`;
+  let html = `<tr><th></th>${S.map(s => `<th><span class="key"><span class="dot" style="background:${COLOR[s.key]}"></span>${s.label}</span></th>`).join("")}</tr>` +
+    row("SoC at start (MWh)", startSoc) + row("SoC at end (MWh)", k => g(k, "soc")) +
+    group(`Energy · USEP ${fmt(D.usep[i], 2)} SGD/MWh`) +
+    row("Charge (MW)", k => g(k, "charge")) + row("Discharge (MW)", k => g(k, "discharge")) +
+    row("Cut by the engine for SoC (MW)", k => g(k, "cut")) +
+    row("Schedule revenue (SGD)", k => sched(k, i), 0);
+  if (RES.length) html += row("Regulation energy, net (MWh)", k => g(k, "reg_net"), 2) + row("Regulation energy revenue (SGD)", k => regEnergy(k, i), 0);
+  for (const p of RES) html += group(`${PNAME[p]} · ${fmt(D.prices[p][i], 2)} SGD/MW/h`) +
+    row("Offered (MW)", k => offeredMw(k, i, p)) + row("Cleared (MW)", k => g(k, MWKEY[p])) +
+    row("Availability revenue (SGD)", k => avail(k, i, p), 0);
+  html += group("Total") + row("Wear (SGD)", k => -g(k, "degradation"), 0) + row("Penalty (SGD)", k => -g(k, "penalty"), 0) +
+    row("Profit (SGD)", k => g(k, "profit"), 0, "total");
+  document.getElementById("compare").innerHTML = html;
+
+  const dec = D.decisions, box = document.getElementById("decision");
+  if (!dec || !dec.expected_soc) { box.innerHTML = `<div class="sub">No decision trace saved for this run.</div>`; return; }
+  const st = states(i);
+  const actual = startSoc("water_value");
+  const fact = (v, label) => `<div class="fact"><b>${v}</b><span>${label}</span></div>`;
+  box.innerHTML = fact(dec.issue[i] || "–", "Forecast issue used") +
+    fact(fmt(dec.decision_soc[i], 1) + " MWh", "SoC known at gate closure") +
+    fact(fmt(dec.expected_soc[i], 1) + " → " + fmt(actual, 1) + " MWh", "Expected vs actual SoC at start") +
+    fact(st.length ? `${fmt(st[0])} · ${fmt(st[Math.floor(st.length / 2)])} · ${fmt(st[st.length - 1])}` : "–", "USEP states: low · middle · high") +
+    fact(`${fmt(dec.preg[i], 1)} / ${fmt(dec.ppri[i], 1)} / ${fmt(dec.pcon[i], 1)}`, "Planned reg / pri / con (MW)") +
+    fact(`${fmt(g("water_value", "reg"), 1)} / ${fmt(g("water_value", "pri"), 1)} / ${fmt(g("water_value", "con"), 1)}`, "Awarded reg / pri / con (MW)");
+}
+
+// ---- at gate closure: what was known when the offer for interval idx was decided ----
+const P = M.plans, GATE = M.gate || 2, BACK = 24;
+const CHUNKS = {};
+const hindIn = document.getElementById("hindsight");
+let hindsight = true;
+try { hindsight = localStorage.getItem("explorer-hindsight") !== "0"; } catch (e) {}
+hindIn.checked = hindsight;
+const viewIn = document.getElementById("asof-strategy");
+let view = "water_value";
+try { view = localStorage.getItem("explorer-asof") || view; } catch (e) {}
+if (![...viewIn.options].some(o => o.value === view)) view = "water_value";
+viewIn.value = view;
+viewIn.addEventListener("change", () => { view = viewIn.value; try { localStorage.setItem("explorer-asof", view); } catch (e) {} asof(); });
+const PREFIX = { water_value: "wv", chronos_median: "ss" };
+hindIn.addEventListener("change", () => { hindsight = hindIn.checked; try { localStorage.setItem("explorer-hindsight", hindsight ? "1" : "0"); } catch (e) {} asof(); });
+const stamp = j => `${dayStr(Math.floor(j / PER))} ${hhmm(((j % PER) + PER) % PER)}`;
+const hm = j => hhmm(((j % PER) + PER) % PER);
+
+function chunk(i) {
+  if (!P) return null;
+  const k = Math.floor(i / P.chunk), c = CHUNKS[k];
+  if (c instanceof Int16Array || c === "error") return c;
+  if (!c) {
+    CHUNKS[k] = fetch(`${P.dir}/w${String(k).padStart(3, "0")}.json`)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(o => { const s = atob(o.i16), b = new Uint8Array(s.length); for (let j = 0; j < s.length; j++) b[j] = s.charCodeAt(j); CHUNKS[k] = new Int16Array(b.buffer); })
+      .catch(() => { CHUNKS[k] = "error"; })
+      .finally(() => { if (Math.floor(idx / P.chunk) === k) asof(); });
+  }
+  return null;
+}
+// planned or forecast values from interval i on (length horizon), null when missing
+function planned(cube, i, field) {
+  const f = P.fields.indexOf(field), H = P.horizon, F = P.fields.length, base = ((i % P.chunk) * F + f) * H;
+  const out = []; for (let k = 0; k < H; k++) { const v = cube[base + k]; out.push(v === -32768 ? null : v / P.scales[f]); }
+  return out;
+}
+
+// one chart over intervals a .. a+L-1 with the decision (gate closure) and the offered interval marked
+function windowChart(title, a, L, series, opts = {}) {
+  const W = opts.W || 1000, H = opts.H || 150, Lp = 58, R = 10, T = 20, B = 20, w = W - Lp - R, h = H - T - B;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img", "aria-label": title });
+  const vals = series.flatMap(s => s.values.filter(v => v !== null));
+  if (opts.band) vals.push(...opts.band.lo.filter(v => v !== null), ...opts.band.hi.filter(v => v !== null));
+  if (!vals.length) vals.push(0);
+  let lo = opts.lo !== undefined ? opts.lo : Math.min(...vals, opts.zero ? 0 : Infinity);
+  let hi = opts.hi !== undefined ? opts.hi : Math.max(...vals, opts.zero ? 0 : -Infinity);
+  if (hi - lo < 1e-9) { hi += 1; lo -= opts.zero && lo === 0 ? 0 : 1; }
+  const cw = w / L, X = k => Lp + k * cw, y = v => T + h - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * h;
+  const d = idx - GATE - a, t = idx - a;
+  svg.append(el("rect", { x: X(d), y: T, width: (t - d) * cw, height: h, fill: "var(--grid)" }));
+  svg.append(el("rect", { x: X(t), y: T, width: cw, height: h, fill: "var(--sel)" }));
+  for (const tk of niceTicks(lo, hi, opts.ticks || 3)) { svg.append(el("line", { x1: Lp, x2: W - R, y1: y(tk), y2: y(tk), stroke: "var(--grid)" }));
+    svg.append(el("text", { x: Lp - 6, y: y(tk) + 4, "text-anchor": "end" }, fmt(tk, Math.abs(tk) < 10 && tk % 1 ? 1 : 0))); }
+  if (opts.zero && lo < 0) svg.append(el("line", { x1: Lp, x2: W - R, y1: y(0), y2: y(0), stroke: "var(--muted)" }));
+  const every = W < 800 ? 12 : 6;
+  for (let k = 0; k < L; k++) if ((a + k) % every === 0) svg.append(el("text", { x: X(k), y: H - 5, "text-anchor": "middle" }, (a + k) % PER === 0 ? dayStr((a + k) / PER).slice(5) : hm(a + k)));
+  if (opts.band) opts.band.lo.forEach((v, k) => { const u = opts.band.hi[k]; if (v === null || u === null) return;
+    svg.append(el("rect", { x: X(k), y: y(u), width: cw, height: Math.max(1, y(v) - y(u)), fill: opts.bandColor || "var(--band)" })); });
+  for (const s of series) {
+    let p = ""; s.values.forEach((v, k) => { if (v === null) return; p += (p && s.values[k - 1] !== null && s.values[k - 1] !== undefined ? "L" : "M") + X(k).toFixed(1) + "," + y(v).toFixed(1) + "L" + X(k + 1).toFixed(1) + "," + y(v).toFixed(1); });
+    svg.append(el("path", { d: p, fill: "none", stroke: s.color, "stroke-width": s.width || 2, "stroke-linejoin": "round", opacity: s.opacity || 1, ...(s.dash ? { "stroke-dasharray": s.dash } : {}) }));
+  }
+  for (const m of opts.dots || []) svg.append(el("circle", { cx: X(m.k), cy: y(m.v), r: 4.5, fill: m.color, stroke: "var(--panel)", "stroke-width": 1.5 }));
+  svg.append(el("line", { x1: X(d), x2: X(d), y1: T - 4, y2: T + h, stroke: "var(--ink)", "stroke-width": 1.5 }));
+  svg.append(el("text", { x: X(d) - 4, y: T + h - 4, "text-anchor": "end" }, "gate closure"));
+  svg.append(el("text", { x: Lp, y: 13, class: "title" }, title));
+  svg.addEventListener("click", ev => { const r = svg.getBoundingClientRect(); const k = Math.floor(((ev.clientX - r.left) / r.width * W - Lp) / cw); if (k >= 0 && k < L) { idx = Math.min(N - 1, Math.max(GATE, a + k)); render(); } });
+  svg.style.cursor = "pointer";
+  return svg;
+}
+
+function asof() {
+  const i = idx, d = i - GATE, H = P ? P.horizon : PER;
+  const a = Math.max(0, d - BACK), end = Math.min(N, i + H), L = end - a;
+  const dec = D.decisions || {};
+  document.getElementById("asof-title").textContent = `At gate closure, ${stamp(d)}: what was known for ${hm(i)}–${hm(i + 1)}`;
+  document.getElementById("asof-sub").textContent =
+    `The offer for ${stamp(i)} is fixed at gate closure, ${GATE} intervals (${GATE * DT * 60} min) before delivery. ` +
+    `The ${GATE} intervals in between (shaded) are already committed. Forecasts and plans start at the offered interval (highlighted). ` +
+    `Untick “Show what happened” to see only what was known then.`;
+  const fact = (v, label) => `<div class="fact"><b>${v}</b><span>${label}</span></div>`;
+  const wvPrev = d > 0 ? dd("water_value").soc[d - 1] : M.soc_init;
+  document.getElementById("asof-facts").innerHTML =
+    fact(stamp(d), "Gate closure (decision)") + fact(`${hm(i)}–${hm(i + 1)}`, "Offered interval") +
+    fact(dec.issue ? dec.issue[i] || "–" : "–", "Forecast issue used") +
+    fact(d > 0 ? fmt(D.usep[d - 1], 2) : "–", `Last USEP known (${d > 0 ? hm(d - 1) : "–"})`) +
+    fact(fmt(dec.decision_soc ? dec.decision_soc[i] : wvPrev, 1) + " MWh", "Water value SoC at gate closure") +
+    fact(dec.expected_soc ? fmt(dec.expected_soc[i], 1) + " MWh" : "–", "Expected SoC at delivery (after committed offers)");
+  const shown = view === "all" ? S.map(s => s.key) : [view];
+  const wvShown = shown.includes("water_value");
+  const PLAN_LABEL = { water_value: "Water value plan (SDP expected)", chronos_median: "Self-schedule plan (MILP)" };
+  document.getElementById("asof-legend").innerHTML =
+    shown.filter(k => PREFIX[k]).map(k => `<span class="key"><span class="dash" style="border-color:${COLOR[k]}"></span>${PLAN_LABEL[k]}</span>`).join("") +
+    shown.map(k => `<span class="key"><span class="dot" style="background:${COLOR[k]}"></span>${S.find(s => s.key === k).label}: actual (solid)</span>`).join("") +
+    `<span class="key"><span class="swatch"></span>Forecast 10–90%${wvShown ? " · SoC 10–90% (water value)" : ""}</span>` +
+    `<span class="key"><span class="dash"></span>Forecast median</span>`;
+
+  const cube = chunk(i), status = document.getElementById("asof-status");
+  const have = cube instanceof Int16Array;
+  status.textContent = !P ? "This run saved no plans (bidding.record_plans off, or an older run)." :
+    cube === "error" ? "The plans did not load. Locally, serve the run folder over HTTP: python -m http.server -d <run folder>." :
+    have ? "" : "Loading the plans…";
+  const fromPlan = field => { const out = new Array(L).fill(null); if (!have) return out; const v = planned(cube, i, field); v.forEach((x, k) => { if (i + k - a < L) out[i + k - a] = x; }); return out; };
+  // realised values: solid up to gate closure, light after it (hidden without hindsight)
+  const real = (arr, color, pf = false) => {
+    const before = [], after = [];
+    for (let j = a; j < end; j++) { const v = arr[j] ?? null; before.push(j < d ? v : null); after.push(j >= d - 1 && hindsight ? v : null); }
+    return [{ values: before, color, width: pf ? 1.2 : 1.8, opacity: pf ? 0.6 : 1 }, { values: after, color, width: 1.3, opacity: pf ? 0.3 : 0.45 }];
+  };
+  const net = k => dd(k).discharge.map((v, j) => v - dd(k).charge[j]);
+  const runs = shown;
+  const plan = (field, color) => ({ values: fromPlan(field), color, dash: "7 4", width: 2.4 });
+  const plans = key => shown.filter(k => PREFIX[k]).map(k => plan(`${PREFIX[k]}_${key}`, COLOR[k]));
+
+  const box = document.getElementById("asof-energy"); box.replaceChildren();
+  box.append(windowChart(`Energy price, SGD/MWh: forecast at gate closure (band 10–90%, dashed median${wvShown ? ", blue dots: SDP expected" : ""}) vs realised`, a, L, [
+    ...real(D.usep, "var(--price)"),
+    { values: fromPlan("usep_q50"), color: "var(--price)", dash: "4 3", width: 1.6 },
+    ...(wvShown ? [{ values: fromPlan("wv_price"), color: "var(--wv)", width: 1.6, dash: "1 3" }] : []),
+  ], { band: { lo: fromPlan("usep_q10"), hi: fromPlan("usep_q90") }, bandColor: "var(--band)", H: 170 }));
+  box.append(windowChart("Net power, MW (+ discharge): plans made at gate closure (dashed) vs actual", a, L, [
+    ...runs.flatMap(k => real(net(k), COLOR[k], k === "perfect_foresight")),
+    ...plans("net"),
+  ], { zero: true, lo: -M.p_max, hi: M.p_max }));
+  const dots = [];
+  if (wvShown && dec.decision_soc && dec.decision_soc[i] !== null) dots.push({ k: d - a, v: dec.decision_soc[i], color: "var(--wv)" });
+  if (wvShown && dec.expected_soc && dec.expected_soc[i] !== null) dots.push({ k: i - a, v: dec.expected_soc[i], color: "var(--wv)" });
+  box.append(windowChart(wvShown ? "SoC, MWh (end of interval): plan (water value 10–90% band) vs actual · dots: SoC at gate closure, expected at delivery" : "SoC, MWh (end of interval): plan vs actual", a, L, [
+    ...runs.flatMap(k => real(dd(k).soc, COLOR[k], k === "perfect_foresight")),
+    ...plans("soc"),
+  ], { band: wvShown ? { lo: fromPlan("wv_p10"), hi: fromPlan("wv_p90") } : undefined, lo: 0, hi: M.soc_max, dots }));
+
+  const rbox = document.getElementById("asof-reserves"); rbox.replaceChildren();
+  for (const p of RES) {
+    const panel = document.createElement("div"); panel.className = "panel";
+    const h2 = document.createElement("h2"); h2.textContent = `${PNAME[p]} at gate closure`;
+    const key = MWKEY[p];
+    panel.append(h2,
+      windowChart(`${PNAME[p]} price, SGD/MW/h: forecast vs realised`, a, L, [
+        ...real(D.prices[p], "var(--price)"),
+        { values: fromPlan(`${p}_q50`), color: "var(--price)", dash: "4 3", width: 1.6 },
+      ], { W: 620, H: 140, band: { lo: fromPlan(`${p}_q10`), hi: fromPlan(`${p}_q90`) }, bandColor: "var(--band)", zero: true }),
+      windowChart("MW held: plans (dashed) vs awarded", a, L, [
+        ...runs.flatMap(k => real(dd(k)[key], COLOR[k], k === "perfect_foresight")),
+        ...plans(key),
+      ], { W: 620, H: 140, lo: 0, hi: M.p_max }));
+    rbox.append(panel);
+  }
+}
+
+function render() {
+  const d = Math.floor(idx / PER); dayIn.value = dayStr(d); slotIn.value = String(idx % PER);
+  if (!OFF[focus]) focus = (S.find(s => OFF[s.key]) || S[0]).key; focusIn.value = focus;
+  dayCharts(); curveChart(); compare(); asof(); save();
+}
+render();
+})();
+</script>

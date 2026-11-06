@@ -41,11 +41,40 @@ def test_tranches_clear_independently(market_cfg) -> None:
     assert m.clear(o).discharge_mw == 30.0
 
 
-def test_both_sides_clearing_are_netted(market_cfg) -> None:
+def test_charge_bids_must_be_priced_below_discharge_offers(market_cfg) -> None:
+    """Ch. 6 5.2B.2.4: one storage offer, pairs in increasing price order, charge pairs (1-5)
+    before discharge pairs (6-10): no charge bid above a discharge offer."""
     m = Market(market_cfg, make_prices([100.0]))
     o = offers_at(m, 0, (Side.DISCHARGE, 50.0, 30.0), (Side.CHARGE, 150.0, 10.0))
-    cleared = m.clear(o)
-    assert (cleared.discharge_mw, cleared.charge_mw) == (20.0, 0.0)
+    with pytest.raises(ValueError, match="increasing"):
+        m.clear(o)
+    ok = offers_at(m, 0, (Side.CHARGE, 40.0, 10.0), (Side.DISCHARGE, 150.0, 30.0))
+    assert m.clear(ok).charge_mw == 0.0  # neither clears at 100
+
+
+def test_offer_format_follows_the_market_rules(market_cfg) -> None:
+    """Ch. 6: at most 5 pairs per side / product, prices to 2 decimals, MW to 1 decimal."""
+    from battery_optimisation.config import Product
+    from battery_optimisation.sim.clearing import AncillaryTranche, conform
+
+    assert market_cfg.n_tranches == 5
+    m = Market(market_cfg, make_prices([100.0]))
+    with pytest.raises(ValueError, match="decimal"):
+        m.clear(offers_at(m, 0, (Side.DISCHARGE, 50.123, 10.0)))
+    with pytest.raises(ValueError, match="decimal"):
+        m.clear(offers_at(m, 0, (Side.DISCHARGE, 50.0, 10.05)))
+    raw = IntervalOffers(
+        interval_start=m.intervals[0],
+        tranches=(
+            Tranche(side=Side.DISCHARGE, price=50.126, quantity_mw=10.09),
+            Tranche(side=Side.DISCHARGE, price=60.0, quantity_mw=0.04),  # rounds to 0 MW
+        ),
+        ancillary=(AncillaryTranche(product=Product.REGULATION, price=1.005, quantity_mw=5.55),),
+    )
+    fixed = conform(raw, market_cfg)
+    assert [(t.price, t.quantity_mw) for t in fixed.tranches] == [(50.13, 10.0)]
+    assert [(t.price, t.quantity_mw) for t in fixed.ancillary] == [(1.0, 5.5)]
+    m.clear(fixed.model_copy(update={"ancillary": ()}))  # valid (no ancillary prices here)
 
 
 def test_offer_rules_enforced(market_cfg) -> None:

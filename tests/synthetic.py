@@ -54,3 +54,15 @@ class FixedStrategy:
         return IntervalOffers.self_schedule(
             view.now, self._charge[i], self._discharge[i], self._market
         )
+
+
+def without_soc_enforcement(market: MarketConfig) -> MarketConfig:
+    """Market whose engine clears offers regardless of the SoC (pre-RC386): infeasible offers
+    reach the battery (``LimitBreachError`` or shortfall penalties)."""
+    rules = market.storage_rules.model_copy(update={"enforce_soc": False})
+    return market.model_copy(update={"storage_rules": rules})
+
+
+def without_shortfall_penalty(market: MarketConfig) -> MarketConfig:
+    penalty = market.shortfall_penalty.model_copy(update={"enabled": False})
+    return market.model_copy(update={"shortfall_penalty": penalty})

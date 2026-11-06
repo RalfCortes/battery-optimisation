@@ -31,9 +31,13 @@ sweep:
 #   worst_case     every pending tranche may clear: never infeasible, conservative
 #   probabilistic  SOC after the pending offers at the soc_quantile / 1 - soc_quantile of the
 #                  scenarios, widened by margin_pct of usable capacity; rare shortfalls are
-#                  settled by the simulator at market.shortfall_penalty_sgd_per_mwh
+#                  settled by the simulator at market.shortfall_penalty
+#   market         no SoC caps: the market engine cuts schedules to the real SoC (NEMS RC386,
+#                  market.storage_rules.enforce_soc; with pooled rules shortfalls are penalised)
+# 12 months half-hourly, NEMS rules: energy only market 9.40 M vs worst_case 8.69 M; with
+# ancillary (SDP reserves) market 34.19 M vs worst_case 33.55 M SGD
 feasibility:
-  mode: worst_case
+  mode: market
   soc_quantile: 0.05
   margin_pct: 5.0
 
@@ -43,3 +47,19 @@ feasibility:
 #          price-taking (clears at any price)
 firm_reserves: true           # 12 months, Markov: firm 24.53 M vs hybrid 24.39 M SGD (within noise;
                               # independent prices had hybrid ahead, 23.80 vs 23.62 M): firm is simpler
+
+# Who chooses the reserves (with --ancillary):
+#   milp             MILP plan on the mean stage price commits them, the SDP gets the rest
+#   sdp              the SDP chooses them per stage, SOC and energy action (optim/reserves.py)
+#   stochastic_milp  two-stage MILP: reserves vs stochastic_paths sampled price paths
+# 12 months half-hourly (market feasibility): sdp 34.19 M, milp 32.99 M; self-schedule 33.43 M
+reserve_planner: sdp
+stochastic_paths: 20
+stochastic_relax: false       # LP relaxation of the stochastic plan (~6x faster)
+ancillary_price: median       # water value's reserve prices: median | mean (revenue is linear: mean)
+reserve_prices: point         # point (one forecast per stage) | markov (reserve price states)
+reserve_markov:               # one common reserve factor (fit on 2025-26 forecast errors)
+  states: 5
+  rho: 0.75
+  loadings: {regulation: 0.63, primary_reserve: 0.45, contingency_reserve: 0.78}
+record_plans: true            # save what each strategy planned at every decision (plans.parquet)

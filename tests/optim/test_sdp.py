@@ -133,3 +133,120 @@ def test_persistent_prices_remove_fake_spreads(battery_cfg, market_cfg):
         vf = solve_sdp(lat.prices, lat.weights, battery, dt, BIDDING, transitions=lat.transitions)
         value[rho] = vf.at(0, battery_cfg.soc_init)
     assert value[0.9] < 0.8 * value[0.0]
+
+
+def test_policy_reproduces_the_value_along_its_path(battery_cfg, market_cfg):
+    """One deterministic price path: following the stored policy earns exactly V_0."""
+    from battery_optimisation.optim.sdp import expected_schedule
+
+    prices = daily_shape(1, seed=2)
+    battery, dt = Battery(battery_cfg), market_cfg.interval_h
+    vf = solve_sdp(prices[:, None], np.ones(1), battery, dt, BIDDING, transitions=np.ones((1, 1)))
+    start = battery_cfg.soc_init
+    plan = expected_schedule(vf, np.ones((1, 1)), battery, dt, stage=0, soc_mwh=start)
+    assert plan.soc_p10 == pytest.approx(plan.soc_mwh) and plan.soc_p90 == pytest.approx(
+        plan.soc_mwh
+    )
+    charge, discharge = np.maximum(-plan.net_mw, 0), np.maximum(plan.net_mw, 0)
+    earned = prices @ (plan.net_mw * dt) - battery.degradation_sgd(charge, discharge, dt).sum()
+    earned += vf.values[-1][np.abs(vf.soc - plan.soc_mwh[-1]).argmin()]
+    assert earned == pytest.approx(vf.at(0, start), abs=1e-6)
+    soc = start + np.cumsum(
+        battery.charge_gain(dt) * charge - battery.discharge_loss(dt) * discharge
+    )
+    assert soc == pytest.approx(plan.soc_mwh, abs=1e-6)
+
+
+def test_expected_schedule_under_markov_prices(battery_cfg, market_cfg):
+    from battery_optimisation.optim.sdp import expected_schedule
+
+    lat = lattice(0.8)
+    battery, dt = Battery(battery_cfg), market_cfg.interval_h
+    vf = solve_sdp(lat.prices, lat.weights, battery, dt, BIDDING, transitions=lat.transitions)
+    plan = expected_schedule(vf, lat.transitions, battery, dt, stage=10, soc_mwh=37.3)
+    assert plan.net_mw.shape == plan.soc_mwh.shape == (48 - 10,)
+    assert np.all(plan.soc_p10 <= plan.soc_p90)
+    assert np.all(
+        (plan.soc_p10 >= battery_cfg.soc_min - 1e-6) & (plan.soc_p90 <= battery_cfg.soc_max + 1e-6)
+    )
+    assert np.all(np.abs(plan.net_mw) <= battery_cfg.p_max_mw + 1e-6)
+    assert plan.price == pytest.approx((vf.occupancy[10:] * lat.prices[10:]).sum(axis=1))
+
+
+def _reserve_case(battery_cfg, market_cfg, r_states: int):
+    from battery_optimisation.optim.reserves import pair_corners
+
+    pc = pair_corners(market_cfg, battery_cfg, BIDDING.soc_levels, market_cfg.interval_h, True)
+    rng = np.random.default_rng(5)
+    base = rng.uniform(2, 12, (48, len(pc.products)))
+    spread = np.linspace(0.4, 1.8, r_states)  # reserve states: low .. high prices
+    values = base[:, None, :] * spread[None, :, None]  # [T, R, P]
+    rewards = np.stack([pc.rewards(values[:, r]) for r in range(r_states)], axis=1)
+    x = np.full((r_states, r_states), 0.1 / max(r_states - 1, 1)) + np.eye(r_states) * (
+        0.9 - 0.1 / max(r_states - 1, 1)
+    )
+    return pc, values, rewards, x / x.sum(axis=1, keepdims=True)
+
+
+def test_reserve_states_identical_states_change_nothing(battery_cfg, market_cfg):
+    lat = lattice(0.8)
+    battery, dt = Battery(battery_cfg), market_cfg.interval_h
+    pc, values, _, rt = _reserve_case(battery_cfg, market_cfg, 4)
+    one = pc.rewards(values[:, 0])
+    plain = solve_sdp(
+        lat.prices,
+        lat.weights,
+        battery,
+        dt,
+        BIDDING,
+        transitions=lat.transitions,
+        reserve_reward=one,
+    )
+    same = solve_sdp(
+        lat.prices,
+        lat.weights,
+        battery,
+        dt,
+        BIDDING,
+        transitions=lat.transitions,
+        reserve_reward=np.repeat(one[:, None], 4, axis=1),
+        reserve_transitions=rt,
+    )
+    assert same.values == pytest.approx(plain.values, abs=1e-6)
+    assert same.continuation == pytest.approx(plain.continuation, abs=1e-6)
+    assert same.policy.shape == (48, lat.prices.shape[1] * 4, plain.soc.size)
+
+
+def test_reserve_states_value_knowing_the_reserve_price(battery_cfg, market_cfg):
+    """Persistent reserve price states: V is at least that of their mean reward (the SDP sees
+    the state before acting), and the expected schedule rolls over the joint states."""
+    from battery_optimisation.optim.sdp import expected_schedule
+
+    lat = lattice(0.8)
+    battery, dt = Battery(battery_cfg), market_cfg.interval_h
+    pc, values, rewards, rt = _reserve_case(battery_cfg, market_cfg, 4)
+    states = solve_sdp(
+        lat.prices,
+        lat.weights,
+        battery,
+        dt,
+        BIDDING,
+        transitions=lat.transitions,
+        reserve_reward=rewards,
+        reserve_transitions=rt,
+    )
+    mean = solve_sdp(
+        lat.prices,
+        lat.weights,
+        battery,
+        dt,
+        BIDDING,
+        transitions=lat.transitions,
+        reserve_reward=pc.rewards(values.mean(axis=1)),
+    )
+    assert np.all(states.values[0] >= mean.values[0] - 1e-6)
+    assert states.values[0].max() > mean.values[0].max() + 1.0
+    joint = np.kron(lat.transitions, rt)
+    plan = expected_schedule(states, joint, battery, dt, stage=5, soc_mwh=50.0)
+    assert plan.soc_mwh.shape == (43,)
+    assert plan.price == pytest.approx((states.occupancy[5:] * lat.prices[5:]).sum(axis=1))

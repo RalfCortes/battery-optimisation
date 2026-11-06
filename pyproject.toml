@@ -13,6 +13,7 @@ dependencies = [
     "holidays>=0.108",
     "ipykernel>=7.4.0",
     "nbformat>=5.11.1",
+    "numba>=0.68",
     "numpy>=2.5.4",
     "plotly>=7.1.0",
     "polars>=2.1.0",

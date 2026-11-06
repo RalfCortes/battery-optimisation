@@ -40,6 +40,7 @@ class PeriodStats(BaseModel):
     ancillary_sgd: float = 0.0  # ancillary availability payments (in profit)
     shortfall_mwh: float = 0.0  # cleared but not deliverable (probabilistic feasibility)
     penalty_sgd: float = 0.0  # shortfall settled at the shortfall penalty price
+    soc_cut_mwh: float = 0.0  # cleared energy + ancillary MWh the engine cut for the SoC
 
 
 def _stats_exprs(battery: BatteryConfig, dt: float) -> list[pl.Expr]:
@@ -56,6 +57,7 @@ def _stats_exprs(battery: BatteryConfig, dt: float) -> list[pl.Expr]:
         pl.col(Col.ANCILLARY_SGD).sum(),
         (pl.col(Col.SHORTFALL_MW) * dt).sum().alias(Col.SHORTFALL_MWH),
         pl.col(Col.PENALTY_SGD).sum(),
+        (pl.col(Col.SOC_CUT_MW) * dt).sum().alias(Col.SOC_CUT_MWH),
     ]
 
 
@@ -63,6 +65,8 @@ def aggregate(
     frame: pl.DataFrame, battery: BatteryConfig, dt: float, every: Period
 ) -> pl.DataFrame:
     """Per-period statistics; periods follow the Asia/Singapore calendar."""
+    if Col.SOC_CUT_MW not in frame.columns:  # runs saved before SoC enforcement
+        frame = frame.with_columns(pl.lit(0.0).alias(Col.SOC_CUT_MW))
     return (
         frame.sort(Col.INTERVAL_START)
         .group_by_dynamic(Col.INTERVAL_START, every=every)
@@ -74,6 +78,8 @@ def aggregate(
 
 
 def total(frame: pl.DataFrame, battery: BatteryConfig, dt: float) -> PeriodStats:
+    if Col.SOC_CUT_MW not in frame.columns:  # runs saved before SoC enforcement
+        frame = frame.with_columns(pl.lit(0.0).alias(Col.SOC_CUT_MW))
     row = frame.select(_stats_exprs(battery, dt)).row(0, named=True)
     return PeriodStats(period_start=frame[Col.INTERVAL_START].min().date(), **row)
 

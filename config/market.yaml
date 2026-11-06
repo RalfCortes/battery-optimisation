@@ -7,9 +7,18 @@ intervals_per_day: 48
 
 gate_closure_intervals: 2    # offers for interval t are fixed at the start of t-2 (NEMS ~65 min)
 
-shortfall_penalty_sgd_per_mwh: 4500.0  # cleared energy the battery cannot deliver (TODO: confirm)
+# Cleared energy the battery cannot deliver. Safety net: with storage_rules.enforce_soc the market
+# engine already caps schedules to the SoC, so this only bites if a shortfall still happens.
+shortfall_penalty:
+  enabled: true
+  sgd_per_mwh: 4500.0          # TODO: confirm (NEMS: no payment + deviation penalties)
 
-n_tranches: 10               # K price-quantity tranches per product (TODO: confirm)
+# Offer format (Market Rules ch. 6): one storage offer of up to 10 price-quantity pairs in increasing
+# price order, 1-5 charging and 6-10 discharging (5.2B.2.4) -> 5 per side; reserve offers (per class)
+# and regulation offers: 1-5 pairs (5.3.2.5, 5.4.3.4). Prices $/MWh to 2 decimals, MW to 1 decimal.
+n_tranches: 5                # K per side (energy) and per ancillary product
+price_decimals: 2
+quantity_decimals: 1
 
 price_floor: -4500.0         # SGD/MWh (TODO: confirm)
 price_cap: 4500.0            # SGD/MWh (TODO: confirm)
@@ -20,16 +29,30 @@ products:
   primary_reserve: true
   contingency_reserve: true
 
-# Energy that must be held per MW of reserve award (SOC headroom).
-reserve_sustain_h:
-  primary_reserve: 0.1666666667   # ~10 minutes
-  contingency_reserve: 0.5        # 30 minutes
-  regulation: 0.25                # TODO: energy held both ways per MW of regulation (assumed)
+# How the market engine limits a storage facility (sim/storage_rules.py). NEMS rules in force
+# since 12 Aug 2025: RC383 (storage offers, reserve limits per class, reserve while charging) and
+# RC386 (the engine receives the real SoC 10 min before each period and caps the schedule).
+# Old pooled rules (reserves summed, no SoC in the engine): config/market_pooled.yaml.
+storage_rules:
+  enforce_soc: true            # engine cuts energy/reserves to what the SoC allows (no shortfall)
+  raise_power_groups:          # per group: discharge - charge + awards <= P (one per reserve class)
+    - [regulation, primary_reserve]
+    - [regulation, contingency_reserve]
+  lower_power_groups:          # charge - discharge + regulation <= P
+    - [regulation]
+  discharge_checks:            # hours sustained from the start SoC; drawn MWh <= SoC - soc_min
+    - {energy: 0.5, regulation: 0.5, primary_reserve: 0.1666666667, contingency_reserve: 0.3333333333}  # C1: primary 10 min then contingency 20 min
+    - {energy: 0.1666666667, regulation: 0.1666666667, primary_reserve: 0.1666666667}  # C2: first 10 min
+    - {energy: 0.5, regulation: 0.5, contingency_reserve: 0.5}   # C3: contingency for 30 min
+  charge_checks:               # added MWh <= soc_max - SoC; reserves not counted (they lower SoC)
+    - {energy: 0.5, regulation: 0.5}                             # C4
 
 # Ancillary services (sim/clearing.py, optim/milp.py). All TODO: confirm with the challenge rules.
 ancillary:
   reserve_group: A               # NEMS reserve group whose prices apply to the battery
-  regulation_utilisation: 0.1    # share of regulation MW actually moved (throughput -> degradation)
+  regulation_energy:             # AGC energy per MW of regulation, share of MW x interval (TODO:
+    up: 0.05                     # no public AGC data; total 0.1 as before). up: injected,
+    down: 0.05                   # down: withdrawn; settled at USEP, moves the SoC, adds wear
   max_award_mw:                  # cap per product: Singapore requirements are small, price-taking
     regulation: 100.0            # may not hold for a 100 MW battery
     primary_reserve: 100.0

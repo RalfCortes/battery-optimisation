@@ -75,6 +75,22 @@ class Col(StrEnum):
     PROFIT_SGD = "profit_sgd"  # revenue + ancillary - degradation - penalty
     SHORTFALL_MW = "shortfall_mw"  # cleared but not deliverable (physical limits), MW
     PENALTY_SGD = "penalty_sgd"  # shortfall settled at the shortfall penalty price
+    REG_NET_MWH = "reg_net_mwh"  # grid energy moved by regulation (+ injected), in revenue
+    SOC_CUT_MW = "soc_cut_mw"
+    # Submitted offers (offers.parquet, one row per tranche)
+    PRODUCT = "product"  # Product: energy or an ancillary product
+    SIDE = "side"  # energy: charge / discharge; ancillary: null
+    TRANCHE = "tranche"  # position in the submitted offer (0 = first)
+    OFFER_PRICE = "offer_price"  # SGD/MWh
+    OFFER_MW = "offer_mw"
+    # Water-value decision trace (decisions.parquet, one row per offered interval)
+    STAGE = "stage"  # position of the interval in its issue's SDP
+    DECISION_SOC_MWH = "decision_soc_mwh"  # SOC known at gate closure
+    EXPECTED_SOC_MWH = "expected_soc_mwh"  # SOC expected at the start of the interval
+    STATE_PRICES = "state_prices"  # the SDP's price states for the interval (list, SGD/MWh)
+    PLANNED_REG_MW = "planned_reg_mw"  # reserves planned before feasibility scaling
+    PLANNED_PRI_MW = "planned_pri_mw"
+    PLANNED_CON_MW = "planned_con_mw"  # cleared MW (energy + ancillary) the engine cut for the SoC
 
     # Aggregates (sim/metrics.py)
     PERIOD_START = "period_start"  # first day of the aggregation period (date)
@@ -82,6 +98,7 @@ class Col(StrEnum):
     DISCHARGED_MWH = "discharged_mwh"  # grid-side energy sold
     CYCLES = "cycles"  # equivalent full cycles
     SHORTFALL_MWH = "shortfall_mwh"
+    SOC_CUT_MWH = "soc_cut_mwh"
     MEAN_USEP = "mean_usep"
 
     # Forecasts (long format: one row per issue time x interval x quantile)
@@ -89,6 +106,12 @@ class Col(StrEnum):
     QUANTILE = "quantile"  # quantile level in (0, 1)
     USEP_FORECAST = "usep_forecast"  # SGD/MWh (the forecast value, whatever the target)
     TARGET = "target"  # forecast price column (ancillary quantile frames)
+
+    # Plans recorded at each decision (plans.parquet: what the strategy expected to do)
+    DECIDED_AT = "decided_at"  # gate closure of the offered interval: when the plan was made
+    TARGET_START = "target_start"  # the interval being offered (first of the plan)
+    SOC_P10_MWH = "soc_p10_mwh"  # 10% / 90% quantiles of the planned SOC (water value)
+    SOC_P90_MWH = "soc_p90_mwh"
     SCENARIO = "scenario"  # scenario id 0..K-1
     WEIGHT = "weight"  # scenario probability
 

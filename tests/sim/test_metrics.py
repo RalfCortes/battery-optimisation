@@ -18,6 +18,7 @@ def test_cycles_metric(market_cfg, battery_cfg) -> None:
     m = Market(market_cfg, make_prices([50.0] * n + [200.0] * n))
     dispatch = Simulator(m, Battery(cfg)).run(strategy)
 
-    assert dispatch.total().cycles == pytest.approx(1.0)
+    # offers are rounded down to 0.1 MW (market format): one cycle up to that step
+    assert dispatch.total().cycles == pytest.approx(1.0, rel=5e-3)
     assert len(dispatch.stats(Period.DAY)) == 1
-    assert dispatch.frame[Col.SOC_MWH][-1] == pytest.approx(cfg.soc_min)
+    assert dispatch.frame[Col.SOC_MWH][-1] == pytest.approx(cfg.soc_min, abs=0.5)

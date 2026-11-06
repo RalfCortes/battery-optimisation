@@ -17,19 +17,26 @@ import numpy as np
 import polars as pl
 import typer
 
+from battery_optimisation.bidding.explorer import PLAN_DIR, write_explorer
 from battery_optimisation.bidding.report import (
     ComparisonInput,
     comparison_table,
     evaluate_bidding,
+    list_bidding_runs,
+    new_bidding_dir,
     save_bidding,
     to_markdown,
+    with_sweep,
 )
 from battery_optimisation.bidding.sweep import sweep, sweep_breakdown
 from battery_optimisation.columns import Col
 from battery_optimisation.config import (
+    AncillaryPrice,
     BiddingConfig,
     FeasibilityMode,
     PriceModel,
+    ReservePlanner,
+    ReservePrices,
     load_battery,
     load_bidding,
     load_market,
@@ -57,14 +64,22 @@ def bidding_tag(bidding: BiddingConfig, ancillary: bool) -> str:
     prices, then ``_as`` (+ ``_hybrid``) with ancillary."""
     f = bidding.feasibility
     tag = (
-        "worst_case"
-        if f.mode is FeasibilityMode.WORST_CASE
-        else f"prob_q{f.soc_quantile:g}_m{f.margin_pct:g}"
+        f"prob_q{f.soc_quantile:g}_m{f.margin_pct:g}"
+        if f.mode is FeasibilityMode.PROBABILISTIC
+        else str(f.mode)
     )
     if bidding.price_model is PriceModel.MARKOV:
         tag += "_markov" + ("" if bidding.markov.rho is None else f"_r{bidding.markov.rho:g}")
     if ancillary:
         tag += "_as" + ("" if bidding.firm_reserves else "_hybrid")
+        if bidding.reserve_planner is ReservePlanner.SDP:
+            tag += "_sdpres"
+        elif bidding.reserve_planner is ReservePlanner.STOCHASTIC_MILP:
+            tag += f"_stoch{bidding.stochastic_paths}" + ("lp" if bidding.stochastic_relax else "")
+        if bidding.reserve_prices is ReservePrices.MARKOV:
+            tag += f"_resmkv{bidding.reserve_markov.states}"
+        elif bidding.ancillary_price is not AncillaryPrice.MEDIAN:
+            tag += f"_anc{bidding.ancillary_price}"
     return tag
 
 
@@ -89,6 +104,30 @@ def run(
     rho: Annotated[
         float | None, typer.Option(help="Markov lag-1 correlation. Default: config, else copula.")
     ] = None,
+    reserve_planner: Annotated[
+        ReservePlanner | None,
+        typer.Option(help="Ancillary: who picks the reserves. Default: config."),
+    ] = None,
+    stochastic_paths: Annotated[
+        int | None, typer.Option(help="Stochastic reserve plan: price paths. Default: config.")
+    ] = None,
+    stochastic_relax: Annotated[
+        bool | None, typer.Option(help="Stochastic reserve plan: LP relaxation. Default: config.")
+    ] = None,
+    reserve_prices: Annotated[
+        ReservePrices | None,
+        typer.Option(help="Water value: reserve prices as point forecasts or Markov states."),
+    ] = None,
+    ancillary_price: Annotated[
+        AncillaryPrice | None,
+        typer.Option(help="Water value: reserve price forecast (median or mean). Default: config."),
+    ] = None,
+    market_config: Annotated[
+        Path | None,
+        typer.Option(
+            "--market", help="Market YAML (e.g. config/market_pooled.yaml). Default: market.yaml."
+        ),
+    ] = None,
 ) -> None:
     """Water-value offers vs self-schedule, price sweep check, comparison of all strategies."""
     configure_logging()
@@ -106,9 +145,19 @@ def run(
         data["price_model"] = price_model
     if rho is not None:
         data["markov"]["rho"] = rho
+    if reserve_planner is not None:
+        data["reserve_planner"] = reserve_planner
+    if stochastic_paths is not None:
+        data["stochastic_paths"] = stochastic_paths
+    if stochastic_relax is not None:
+        data["stochastic_relax"] = stochastic_relax
+    if ancillary_price is not None:
+        data["ancillary_price"] = ancillary_price
+    if reserve_prices is not None:
+        data["reserve_prices"] = reserve_prices
     bidding = BiddingConfig.model_validate(data)
     fr = load_forecast_run(forecast_run or list_forecast_runs()[0])
-    market = load_market()
+    market = load_market(market_config) if market_config else load_market()
     start = fr.report.test_start
     prices = load_prices(start - timedelta(days=3), fr.report.test_end, market, ancillary)
     realised = prices.filter(pl.col(Col.INTERVAL_START).dt.date() >= start)
@@ -144,13 +193,11 @@ def run(
     grid = np.asarray(bidding.sweep.prices)
     stats, per_interval = sweep(ev.water_value, grid)
     steps = sweep_breakdown(ev.water_value, grid)
-    ev = type(ev)(
-        report=ev.report.model_copy(update={"sweep": stats, "sweep_steps": steps}),
-        runs=ev.runs,
-        water_value=ev.water_value,
-    )
+    ev = with_sweep(ev, stats, steps)
     tag = bidding_tag(bidding, ancillary)
-    out = save_bidding(ev, fr.path / f"bidding_{tag}")
+    if market_config and market_config.stem != "market":
+        tag += f"_{market_config.stem}"
+    out = save_bidding(ev, new_bidding_dir(fr.path, tag))
     per_interval.write_parquet(out / "sweep.parquet")
 
     # every strategy over the same window: forecast-run backtests + the bidding run
@@ -229,3 +276,29 @@ def run(
 
 if __name__ == "__main__":
     app()
+
+
+@app.command()
+def explore(
+    run: Annotated[
+        Path | None,
+        typer.Option(help="Saved bidding run folder; default: the newest one."),
+    ] = None,
+) -> None:
+    """Settlement explorer: explore.html in the bidding run folder (+ explore_plans/: what was
+    known at each gate closure, loaded on demand; serve the folder over HTTP to see it)."""
+    configure_logging()
+    if run is None:
+        runs = list_bidding_runs(list_forecast_runs()[0])
+        if not runs:
+            raise typer.BadParameter("no saved bidding run yet: run `bidding run` first")
+        run = runs[0]
+    out = write_explorer(run)
+    typer.echo(f"Explorer: {out} ({out.stat().st_size / 1e6:.1f} MB)")
+    plans = out.parent / PLAN_DIR
+    if plans.exists():
+        size = sum(f.stat().st_size for f in plans.iterdir()) / 1e6
+        typer.echo(
+            f"Decision view: {plans} ({size:.1f} MB); to open locally: "
+            f"python -m http.server -d {out.parent} then http://localhost:8000/{out.name}"
+        )

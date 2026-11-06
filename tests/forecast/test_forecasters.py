@@ -163,3 +163,23 @@ def test_with_ancillary_joins_energy_and_ancillary_forecasts() -> None:
     )
     assert out[Col.USEP].to_list() == [50.0] * 48
     assert out["regulation"].to_list() == [7.0] * 48  # the ancillary forecaster wins
+
+
+def test_quantile_forecaster_mean_of_a_skewed_forecast() -> None:
+    """``level=None``: the mean of the forecast distribution (from its quantiles), what a
+    price x quantity revenue is worth; above the median for right-skewed prices."""
+    from scipy.stats import lognorm
+
+    from battery_optimisation.forecast.stored import AncillaryQuantileForecaster
+
+    issued = at(date(2026, 1, 1), 23)
+    dist = lognorm(s=0.6, scale=15.0)
+    values = np.tile(dist.ppf(LEVELS), (48, 1))
+    frame = quantile_frame(issued, values, LEVELS, gap=2).with_columns(
+        pl.lit("regulation").alias(Col.TARGET)
+    )
+    view = two_days_market().view(48)
+    mean = AncillaryQuantileForecaster(frame, level=None).forecast(view, view.end)["regulation"]
+    median = AncillaryQuantileForecaster(frame).forecast(view, view.end)["regulation"]
+    assert median.to_numpy() == pytest.approx(15.0, rel=1e-6)
+    assert mean.to_numpy() == pytest.approx(dist.mean(), rel=0.03)

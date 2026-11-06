@@ -20,8 +20,14 @@ import numpy as np
 import polars as pl
 
 from battery_optimisation.columns import Col
-from battery_optimisation.config import BiddingConfig, PriceModel
-from battery_optimisation.forecast.markov import price_lattice
+from battery_optimisation.config import (
+    BiddingConfig,
+    MarketConfig,
+    PriceModel,
+    Product,
+    ReserveMarkovConfig,
+)
+from battery_optimisation.forecast.markov import FactorLattice, factor_lattice, price_lattice
 
 
 @dataclass(frozen=True)
@@ -128,3 +134,50 @@ def stage_source(
     if not copula_lag1:
         raise ValueError("Markov prices need markov.rho or the copula lag-1 correlations")
     return LatticeStages(quantiles, m.states, monthly_rho(copula_lag1))
+
+
+class ReserveLattices:
+    """Reserve price states per decision (``reserve_prices: markov``): the factor lattice of the
+    latest ancillary quantile forecast issued at or before the decision (long frame: issued_at,
+    interval_start, lead_periods, quantile, usep_forecast, target = price column)."""
+
+    def __init__(
+        self,
+        quantiles: pl.DataFrame,
+        market: MarketConfig,
+        cfg: ReserveMarkovConfig,
+        products: tuple[Product, ...],
+    ) -> None:
+        from battery_optimisation.sim.clearing import price_column
+
+        self.cfg, self.products = cfg, products
+        self._levels = np.sort(quantiles[Col.QUANTILE].unique().to_numpy())
+        self._parts = {}
+        for p in products:
+            part = quantiles.filter(pl.col(Col.TARGET) == str(price_column(p, market))).sort(
+                Col.ISSUED_AT, Col.LEAD_PERIODS, Col.QUANTILE
+            )
+            if part.is_empty():
+                raise ValueError(f"no ancillary quantiles for {p}")
+            issues, rows = _row_ranges(part)
+            self._parts[p] = (part, issues, rows)
+
+    def load(self, decided_at: datetime, stamps: list[datetime]) -> FactorLattice | None:
+        """Lattice over ``stamps`` (None if a product's latest issue does not cover them)."""
+        q = {}
+        for p in self.products:
+            part, issues, rows = self._parts[p]
+            i = bisect.bisect_right(issues, decided_at)
+            if i == 0:
+                return None
+            a, b = rows[issues[i - 1]]
+            sl = part.slice(a, b - a)
+            values = sl[Col.USEP_FORECAST].to_numpy().reshape(-1, self._levels.size)
+            at = {
+                t: j for j, t in enumerate(sl[Col.INTERVAL_START].gather_every(self._levels.size))
+            }
+            index = [at.get(t) for t in stamps]
+            if any(j is None for j in index):
+                return None
+            q[p] = values[index]
+        return factor_lattice(self._levels, q, self.cfg.loadings, self.cfg.states, self.cfg.rho)

@@ -19,6 +19,8 @@ states, the best target SOC (``optimal_net_mw``); each step of that supply curve
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 
 from battery_optimisation.battery import TOL, Battery
@@ -42,13 +44,23 @@ GRID_PER_STATE = 50  # response-curve prices between two consecutive price state
 _BEYOND = np.array([0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0])  # x price-state span
 
 
+Allowed = Callable[[np.ndarray, np.ndarray], np.ndarray]  # (charge, discharge MW) -> ok mask
+
+
 def optimal_net_mw(
-    vf: ValueFunction, t: int, soc: float, battery: Battery, dt: float, prices: np.ndarray
+    vf: ValueFunction,
+    t: int,
+    soc: float,
+    battery: Battery,
+    dt: float,
+    prices: np.ndarray,
+    allowed: Allowed | None = None,
 ) -> np.ndarray:
     """Optimal net MW (discharge - charge) in interval ``t`` from ``soc`` for each price:
     max over reachable s' of price * sold(s -> s') - degradation + value after t (which, for
     Markov prices, depends on the price). Piecewise linear values: the optimum is at a grid
-    point or a power limit."""
+    point or a power limit. ``allowed``: energy actions compatible with the reserves held
+    (the others are excluded; "stay" is always kept)."""
     here = Battery(battery.config, soc)
     lo = soc - here.max_discharge_mw(dt) * here.discharge_loss(dt)
     hi = soc + here.max_charge_mw(dt) * here.charge_gain(dt)
@@ -65,11 +77,26 @@ def optimal_net_mw(
     f = position - left
     base = (1 - f) * after[:, left] + f * after[:, left + 1]
     value = prices[:, None] * net[None, :] * dt + base - here.degradation_sgd(charge, discharge, dt)
+    if allowed is not None:
+        keep = allowed(charge, discharge) | (np.abs(net) < TOL)
+        value = np.where(keep[None, :], value, -np.inf)
     return net[value.argmax(axis=1)]
 
 
+def rising(net: np.ndarray) -> np.ndarray:
+    """Closest non-decreasing sequence to ``net`` in least squares (pool adjacent violators):
+    one market offer is a supply curve, net MW rising with price."""
+    blocks: list[list[float]] = []  # [mean, weight]
+    for v in np.asarray(net, float):
+        blocks.append([v, 1.0])
+        while len(blocks) > 1 and blocks[-2][0] > blocks[-1][0]:
+            (m2, w2), (m1, w1) = blocks.pop(), blocks.pop()
+            blocks.append([(m1 * w1 + m2 * w2) / (w1 + w2), w1 + w2])
+    return np.concatenate([np.full(int(w), m) for m, w in blocks])
+
+
 def _response_curve(
-    vf: ValueFunction, t: int, soc: float, battery: Battery, dt: float
+    vf: ValueFunction, t: int, soc: float, battery: Battery, dt: float, allowed=None
 ) -> tuple[list[Tranche], list[Tranche]]:
     """Offer curve = the optimal response on a price grid (Markov prices)."""
     states = vf.state_prices[t]
@@ -82,7 +109,9 @@ def _response_curve(
     grid = np.unique(
         np.concatenate([states[0] - span * _BEYOND, inside, states[-1] + span * _BEYOND])
     )
-    net = optimal_net_mw(vf, t, soc, battery, dt, grid)
+    # rising in price (one offer curve); a non-monotone response (high price now announcing
+    # higher prices: charge) is fitted by the closest rising curve
+    net = rising(optimal_net_mw(vf, t, soc, battery, dt, grid, allowed))
     sold = np.maximum.accumulate(np.maximum(net, 0.0))  # discharge MW, rising with price
     bought = np.maximum.accumulate(np.maximum(-net, 0.0)[::-1])  # charge MW, falling price
     discharge = [
@@ -99,12 +128,20 @@ def _response_curve(
 
 
 def offer_curve(
-    vf: ValueFunction, t: int, soc: float, battery: Battery, dt: float
+    vf: ValueFunction,
+    t: int,
+    soc: float,
+    battery: Battery,
+    dt: float,
+    allowed: Allowed | None = None,
 ) -> tuple[list[Tranche], list[Tranche]]:
     """(discharge tranches, charge tranches) for interval ``t`` from reference ``soc``,
-    each in cumulative order (first tranche = nearest to ``soc``)."""
+    each in cumulative order (first tranche = nearest to ``soc``). ``allowed`` (Markov prices
+    only): energy actions compatible with the reserves held."""
     if vf.continuation is not None:
-        return _response_curve(vf, t, soc, battery, dt)
+        return _response_curve(vf, t, soc, battery, dt, allowed)
+    if allowed is not None:
+        raise ValueError("reserve-restricted curves need Markov prices")
     here = Battery(battery.config, soc)
     kappa = battery.config.kappa_sgd_per_mwh
     value = lambda s: float(np.interp(s, vf.soc, vf.values[t + 1]))  # noqa: E731
@@ -145,8 +182,20 @@ def price_take_beyond_band(
 ) -> tuple[list[Tranche], list[Tranche]]:
     """Tranches that clear at every plausible price become price-taking (certain): discharge
     priced <= ``low`` is offered at the floor, charge priced >= ``high`` is bid at the cap.
-    Feasibility can then count them as cleared for later intervals (gate closure)."""
+    Feasibility can then count them as cleared for later intervals (gate closure). One offer
+    must stay in increasing price order (Market Rules ch. 6 5.2B.2.4): a price-taking charge
+    bid stops just below the lowest discharge offer, a price-taking discharge offer just above
+    the highest charge bid (the same clearing within the band)."""
+    tick = 0.01
+    d_min = min((t.price for t in discharge if t.price > low), default=cap + tick)
+    c_max = max((t.price for t in charge if t.price < high), default=floor - tick)
     return (
-        [t.model_copy(update={"price": floor}) if t.price <= low else t for t in discharge],
-        [t.model_copy(update={"price": cap}) if t.price >= high else t for t in charge],
+        [
+            t.model_copy(update={"price": max(floor, c_max + tick)}) if t.price <= low else t
+            for t in discharge
+        ],
+        [
+            t.model_copy(update={"price": min(cap, d_min - tick)}) if t.price >= high else t
+            for t in charge
+        ],
     )

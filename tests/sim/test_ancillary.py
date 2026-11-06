@@ -2,7 +2,7 @@
 
 import polars as pl
 import pytest
-from synthetic import make_prices
+from synthetic import make_prices, without_soc_enforcement
 
 from battery_optimisation.battery import Battery, LimitBreachError
 from battery_optimisation.columns import Col
@@ -69,9 +69,12 @@ def test_ancillary_offers_clear_pay_as_clear_and_settle(market_cfg, battery_cfg)
     assert f[Col.PRI_MW].to_list() == [0.0, 0.0]
     assert f[Col.CON_MW].to_list() == [20.0, 20.0]
     assert f[Col.ANCILLARY_SGD][0] == pytest.approx((20.0 * 10 + 30.0 * 20) * dt)
-    u, k = market_cfg.ancillary.regulation_utilisation, battery_cfg.kappa_sgd_per_mwh
+    e, k = market_cfg.ancillary.regulation_energy, battery_cfg.kappa_sgd_per_mwh
+    u = e.up + e.down
     assert f[Col.DEGRADATION_SGD][0] == pytest.approx(k * u * 10.0 * dt)  # regulation throughput
-    assert f[Col.SOC_MWH].to_list() == [battery_cfg.soc_init] * 2  # no energy moved
+    # regulation moves energy both ways around the schedule: losses lower the SoC
+    drift = 10.0 * dt * (e.down * battery_cfg.eta_c - e.up / battery_cfg.eta_d)
+    assert f[Col.SOC_MWH][0] == pytest.approx(battery_cfg.soc_init + drift)
     assert dispatch.total().ancillary_sgd == pytest.approx(f[Col.ANCILLARY_SGD].sum())
 
 
@@ -105,6 +108,7 @@ def test_awards_are_capped_by_the_product_limit(market_cfg, battery_cfg) -> None
     ],
 )
 def test_unsustainable_awards_raise(market_cfg, battery_cfg, soc, discharge, con, match) -> None:
+    market_cfg = without_soc_enforcement(market_cfg)  # the engine would cut them (RC386)
     cfg = battery_cfg.model_copy(update={"soc_init": soc})
     prices = with_ancillary(make_prices([100.0]), market_cfg, reg=0.0, pri=0.0, con=30.0)
     tranches = (
@@ -121,3 +125,31 @@ def test_unsustainable_awards_raise(market_cfg, battery_cfg, soc, discharge, con
     )
     with pytest.raises(LimitBreachError, match=match):
         Simulator(Market(market_cfg, prices), Battery(cfg)).run(Fixed(lambda i, now: o, market_cfg))
+
+
+def test_regulation_energy_moves_the_soc_and_is_settled_at_usep(market_cfg, battery_cfg) -> None:
+    """Energy moved by AGC is metered energy: injected paid at the energy price, withdrawn
+    paid for at it; the SoC follows with the battery's efficiencies."""
+    from battery_optimisation.config import RegulationEnergy
+
+    up_only = market_cfg.model_copy(
+        update={
+            "ancillary": market_cfg.ancillary.model_copy(
+                update={"regulation_energy": RegulationEnergy(up=0.2, down=0.0)}
+            )
+        }
+    )
+    prices = with_ancillary(make_prices([150.0]), up_only, reg=20.0, pri=0.0, con=0.0)
+
+    def offers(i, now):
+        return IntervalOffers(
+            interval_start=now,
+            ancillary=(AncillaryTranche(product=Product.REGULATION, price=0.0, quantity_mw=40.0),),
+        )
+
+    f = Simulator(Market(up_only, prices), Battery(battery_cfg)).run(Fixed(offers, up_only)).frame
+    dt = up_only.interval_h
+    injected = 0.2 * 40.0 * dt
+    assert f[Col.REG_NET_MWH][0] == pytest.approx(injected)
+    assert f[Col.REVENUE_SGD][0] == pytest.approx(150.0 * injected)
+    assert f[Col.SOC_MWH][0] == pytest.approx(battery_cfg.soc_init - injected / battery_cfg.eta_d)

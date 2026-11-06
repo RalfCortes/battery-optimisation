@@ -3,7 +3,7 @@
 battery = load_battery()
 battery.p_max_mw, battery.round_trip_efficiency
 market = load_market()
-market.enabled_products, market.reserve_sustain_h[Product.CONTINGENCY_RESERVE]
+market.enabled_products, market.storage_rules.discharge_checks
 """
 
 from __future__ import annotations
@@ -35,8 +35,7 @@ class Product(StrEnum):
 
 
 ANCILLARY_PRODUCTS = (Product.REGULATION, Product.PRIMARY_RESERVE, Product.CONTINGENCY_RESERVE)
-RAISE_PRODUCTS = ANCILLARY_PRODUCTS  # need upward power and stored energy
-LOWER_PRODUCTS = (Product.REGULATION,)  # need downward power and free capacity
+LOWER_PRODUCTS = (Product.REGULATION,)  # the only ones that can push energy into the battery
 
 
 class ReserveGroup(StrEnum):
@@ -95,10 +94,76 @@ class BatteryConfig(_Config):
         return self.soc_max - self.soc_min
 
 
+class RegulationEnergy(_Config):
+    """Energy AGC moves per MW of regulation held, as a share of MW x interval (expected):
+    ``up`` injected (raise, paid the energy price), ``down`` withdrawn (lower, pays it). It is
+    ordinary metered energy (Market Rules ch. 7): it moves the SoC and adds throughput (wear)."""
+
+    up: float = Field(ge=0, le=1)
+    down: float = Field(ge=0, le=1)
+
+    @property
+    def throughput(self) -> float:
+        return self.up + self.down
+
+
 class AncillaryConfig(_Config):
     reserve_group: ReserveGroup  # whose reserve prices apply to the battery
-    regulation_utilisation: float = Field(ge=0, le=1)  # share of regulation MW actually moved
+    regulation_energy: RegulationEnergy
     max_award_mw: dict[Product, NonNegativeFloat]  # cap per product (market size)
+
+
+class StorageRules(_Config):
+    """Limits the market engine puts on a storage facility's schedule (``sim.storage_rules``).
+
+    Power, per group (NEMS: one per reserve class, RC383 D.17.2.4A / D.18.1.6-7):
+      raise: discharge - charge + sum of the group's awards <= P
+      lower: charge - discharge + sum of the group's awards <= P
+    SoC, per check (RC386): hours each scheduled MW must be sustained from the SoC at the start
+    of the interval (``energy`` = the energy schedule itself):
+      discharge checks: drawn MWh <= SoC - soc_min      charge checks: added MWh <= soc_max - SoC
+    ``enforce_soc``: the engine cuts schedules to what the SoC allows (NEMS since 12 Aug 2025);
+    otherwise offers clear regardless and infeasible ones reach the battery.
+    """
+
+    enforce_soc: bool
+    raise_power_groups: list[list[Product]]
+    lower_power_groups: list[list[Product]]
+    discharge_checks: list[dict[Product, NonNegativeFloat]]
+    charge_checks: list[dict[Product, NonNegativeFloat]]
+
+    @model_validator(mode="after")
+    def _products(self) -> Self:
+        for group in self.raise_power_groups + self.lower_power_groups:
+            if not set(group) <= set(ANCILLARY_PRODUCTS):
+                raise ValueError("power groups hold ancillary products only")
+        for group in self.lower_power_groups:
+            if not set(group) <= set(LOWER_PRODUCTS):
+                raise ValueError("lower_power_groups: only regulation pushes energy in")
+        for check in self.charge_checks:
+            if not set(check) <= {Product.ENERGY, *LOWER_PRODUCTS}:
+                raise ValueError("charge_checks: reserves only lower the SoC (not counted)")
+        return self
+
+    @property
+    def raise_products(self) -> set[Product]:
+        return {p for g in self.raise_power_groups for p in g}
+
+    @property
+    def lower_products(self) -> set[Product]:
+        return {p for g in self.lower_power_groups for p in g}
+
+
+class ShortfallPenalty(_Config):
+    """Cleared energy the battery cannot deliver (safety net: with ``enforce_soc`` the engine
+    already caps schedules to the SoC)."""
+
+    enabled: bool
+    sgd_per_mwh: NonNegativeFloat
+
+    @property
+    def price(self) -> float:
+        return self.sgd_per_mwh if self.enabled else 0.0
 
 
 class MarketConfig(_Config):
@@ -108,12 +173,14 @@ class MarketConfig(_Config):
     interval_h: PositiveFloat
     intervals_per_day: PositiveInt
     gate_closure_intervals: NonNegativeInt  # offers for t are fixed at the start of t - this
-    shortfall_penalty_sgd_per_mwh: NonNegativeFloat  # cleared energy the battery cannot deliver
-    n_tranches: PositiveInt
+    shortfall_penalty: ShortfallPenalty
+    n_tranches: PositiveInt  # per side (energy storage offer) and per ancillary product
+    price_decimals: NonNegativeInt = 2  # offer prices, $/MWh (Market Rules ch. 6)
+    quantity_decimals: NonNegativeInt = 1  # offer quantities, MW
     price_floor: float
     price_cap: float
     products: dict[Product, bool]
-    reserve_sustain_h: dict[Product, NonNegativeFloat | None]
+    storage_rules: StorageRules
     ancillary: AncillaryConfig
 
     @model_validator(mode="after")
@@ -131,9 +198,6 @@ class MarketConfig(_Config):
     @property
     def ancillary_products(self) -> list[Product]:
         return [p for p in ANCILLARY_PRODUCTS if self.products.get(p, False)]
-
-    def sustain_h(self, product: Product) -> float:
-        return self.reserve_sustain_h.get(product) or 0.0
 
 
 def _read_yaml(path: Path) -> dict:
@@ -266,6 +330,7 @@ class SweepConfig(_Config):
 class FeasibilityMode(StrEnum):
     WORST_CASE = "worst_case"  # every pending tranche may clear: never infeasible
     PROBABILISTIC = "probabilistic"  # SOC quantiles over the scenarios + margin
+    MARKET = "market"  # no SoC caps: the engine cuts to the SoC (storage_rules.enforce_soc)
 
 
 class FeasibilityConfig(_Config):
@@ -286,6 +351,42 @@ class MarkovConfig(_Config):
     rho: float | None = Field(default=None, ge=0, lt=1)  # lag-1 correlation; None: copula's
 
 
+class ReservePrices(StrEnum):
+    """How the water value's SDP sees reserve prices (reserve planner ``sdp``)."""
+
+    POINT = "point"  # one forecast per stage (``ancillary_price``: median or mean)
+    MARKOV = "markov"  # Markov states of a common reserve factor (``reserve_markov``)
+
+
+class ReserveMarkovConfig(_Config):
+    """One-factor model of the reserve prices (``forecast.markov.factor_lattice``). Defaults
+    measured on the 2025-26 Chronos forecast errors (normal scores): pairwise correlations
+    reg/pri 0.28, reg/con 0.49, pri/con 0.35 -> loadings; lag-1 0.71-0.77."""
+
+    states: int = Field(default=5, ge=2)
+    rho: float = Field(default=0.75, ge=0, lt=1)
+    loadings: dict[Product, float] = {
+        Product.REGULATION: 0.63,
+        Product.PRIMARY_RESERVE: 0.45,
+        Product.CONTINGENCY_RESERVE: 0.78,
+    }
+
+
+class AncillaryPrice(StrEnum):
+    """Point forecast of ancillary prices the water value plans reserves on."""
+
+    MEDIAN = "median"  # quantile 0.5 (what the self-schedule uses)
+    MEAN = "mean"  # mean of the forecast distribution: availability revenue is linear in price
+
+
+class ReservePlanner(StrEnum):
+    """Who chooses the ancillary awards of the water-value strategy."""
+
+    MILP = "milp"  # a MILP plan on the mean stage price commits them; SDP gets what is left
+    SDP = "sdp"  # the SDP chooses them per stage, SOC and energy action (``optim.reserves``)
+    STOCHASTIC_MILP = "stochastic_milp"  # two-stage MILP: reserves vs sampled price paths
+
+
 class BiddingConfig(_Config):
     soc_levels: int = Field(ge=3)  # SOC grid points from soc_min to soc_max
     terminal_penalty_sgd_per_mwh: PositiveFloat  # per MWh below soc_init at the end of the day
@@ -296,6 +397,13 @@ class BiddingConfig(_Config):
     # price-taking charge backs raise reserves beyond P, as in the plan)
     price_model: PriceModel = PriceModel.INDEPENDENT
     markov: MarkovConfig = MarkovConfig(states=11)
+    reserve_planner: ReservePlanner = ReservePlanner.MILP
+    stochastic_paths: int = Field(default=20, ge=1)  # price paths of the stochastic reserve plan
+    ancillary_price: AncillaryPrice = AncillaryPrice.MEDIAN
+    reserve_prices: ReservePrices = ReservePrices.POINT
+    reserve_markov: ReserveMarkovConfig = ReserveMarkovConfig()
+    record_plans: bool = True  # keep each decision's plan (plans.parquet) for troubleshooting
+    stochastic_relax: bool = False  # LP relaxation of the stochastic plan (no binaries, faster)
 
 
 def load_bidding(path: Path = CONFIG_DIR / "bidding.yaml") -> BiddingConfig:

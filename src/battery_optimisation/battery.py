@@ -76,36 +76,16 @@ class Battery:
             max(0.0, min(discharge_mw, self.max_discharge_mw(dt))),
         )
 
-    def check_reserves(
-        self,
-        soc_end: float,
-        charge_mw: float,
-        discharge_mw: float,
-        raise_mw: float,
-        lower_mw: float,
-        raise_energy_mwh: float,
-        lower_energy_mwh: float,
-    ) -> None:
-        """Reserve awards must be deliverable for their full sustain time from the SOC at the start
-        and the end of the interval (``raise_energy_mwh`` = sum of MW x sustain hours)."""
+    def regulate(self, up_mwh: float, down_mwh: float) -> float:
+        """Apply energy moved by regulation within the interval (grid side: ``up`` injected,
+        ``down`` withdrawn). Returns the new SOC; raises ``LimitBreachError`` (state unchanged)
+        if it leaves the SOC bounds."""
         cfg = self.config
-        if discharge_mw - charge_mw + raise_mw > cfg.p_max_mw + TOL:
-            raise LimitBreachError(
-                f"power: {discharge_mw - charge_mw:.1f} MW net + {raise_mw:.1f} MW raise"
-            )
-        if charge_mw - discharge_mw + lower_mw > cfg.p_max_mw + TOL:
-            raise LimitBreachError(
-                f"power: {charge_mw - discharge_mw:.1f} MW charging + {lower_mw:.1f} MW lower"
-            )
-        for soc in (self._soc, soc_end):
-            if soc - cfg.soc_min < raise_energy_mwh / cfg.eta_d - TOL:
-                raise LimitBreachError(
-                    f"sustain: SOC {soc:.2f} MWh, raise needs {raise_energy_mwh:.2f} MWh"
-                )
-            if cfg.soc_max - soc < lower_energy_mwh * cfg.eta_c - TOL:
-                raise LimitBreachError(
-                    f"sustain: SOC {soc:.2f} MWh, lower needs {lower_energy_mwh:.2f} MWh"
-                )
+        soc = self._soc + down_mwh * cfg.eta_c - up_mwh / cfg.eta_d
+        if not cfg.soc_min - TOL <= soc <= cfg.soc_max + TOL:
+            raise LimitBreachError(f"soc: regulation takes SOC to {soc:.2f} MWh")
+        self._soc = min(max(soc, cfg.soc_min), cfg.soc_max)
+        return self._soc
 
     def step(self, charge_mw: float, discharge_mw: float, dt: float) -> Step:
         """Apply one interval. Raises ``LimitBreachError`` (state unchanged) on any breach."""

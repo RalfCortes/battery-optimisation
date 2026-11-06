@@ -36,3 +36,34 @@ def test_persistence_grows_with_correlation() -> None:
     # the stationary distribution stays (close to) the equal state weights
     lat = price_lattice(LEVELS, q, 9, 0.8)
     assert lat.weights @ lat.transitions == pytest.approx(lat.weights, abs=0.01)
+
+
+def _skewed(scale: float) -> np.ndarray:
+    """[48, Q] right-skewed (lognormal) quantiles, like reserve prices."""
+    from scipy.stats import lognorm
+
+    return np.tile(lognorm(s=0.6, scale=scale).ppf(LEVELS), (48, 1))
+
+
+def test_reserve_factor_states_keep_each_products_mean() -> None:
+    """One factor drives every reserve price: state r = factor bin, each product's price = its
+    mean given the factor (loading lambda); averaged over the states: the product's mean."""
+    from battery_optimisation.forecast.markov import factor_lattice, price_lattice
+
+    q = {"a": _skewed(15.0), "b": _skewed(30.0)}
+    lat = factor_lattice(LEVELS, q, {"a": 0.6, "b": 0.8}, states=5, rho=0.75)
+    assert lat.prices.shape == (48, 5, 2)
+    assert lat.transitions.sum(axis=1) == pytest.approx(np.ones(5))
+    assert np.all(np.diff(lat.prices, axis=1) > 0)  # increasing in the factor
+    mean = {k: price_lattice(LEVELS, v, 11, 0.0).prices.mean(axis=1) for k, v in q.items()}
+    for j, k in enumerate(q):
+        assert lat.prices[:, :, j] @ lat.weights == pytest.approx(mean[k], rel=0.01)
+    # loading 0: the factor says nothing, every state is the mean
+    flat = factor_lattice(LEVELS, q, {"a": 0.0, "b": 0.0}, states=5, rho=0.75)
+    assert flat.prices[:, :, 0] == pytest.approx(np.repeat(mean["a"][:, None], 5, 1), rel=0.01)
+    # loading 1: the product is the factor, states = the plain Markov lattice's
+    full = factor_lattice(LEVELS, q, {"a": 1.0, "b": 1.0}, states=5, rho=0.75)
+    assert full.prices[:, :, 1] == pytest.approx(
+        price_lattice(LEVELS, q["b"], 5, 0.75).prices, rel=1e-3
+    )
+    assert full.transitions == pytest.approx(price_lattice(LEVELS, q["b"], 5, 0.75).transitions)

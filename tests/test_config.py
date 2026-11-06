@@ -21,7 +21,21 @@ def test_market_yaml_loads() -> None:
     market = load_market()
     assert market.interval_h == 0.5
     assert set(market.enabled_products) == set(Product)
-    assert market.reserve_sustain_h[Product.CONTINGENCY_RESERVE] == 0.5
+    rules = market.storage_rules
+    assert rules.enforce_soc  # NEMS since 12 Aug 2025 (RC386)
+    assert [Product.REGULATION, Product.PRIMARY_RESERVE] in rules.raise_power_groups
+    assert [Product.REGULATION, Product.CONTINGENCY_RESERVE] in rules.raise_power_groups
+    assert {Product.ENERGY: 0.5, Product.REGULATION: 0.5, Product.CONTINGENCY_RESERVE: 0.5} in (
+        rules.discharge_checks
+    )
+    assert market.shortfall_penalty.enabled
+
+
+def test_charge_checks_reject_reserves() -> None:
+    data = load_market().model_dump(mode="json")
+    data["storage_rules"]["charge_checks"] = [{"energy": 0.5, "contingency_reserve": 0.5}]
+    with pytest.raises(ValidationError, match="charge_checks"):
+        MarketConfig.model_validate(data)
 
 
 def test_battery_rejects_inconsistent_soc() -> None:

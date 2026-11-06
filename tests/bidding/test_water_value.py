@@ -66,6 +66,41 @@ def test_tranches_beyond_every_plausible_price_become_price_taking() -> None:
 
     discharge = [Tranche(side=Side.DISCHARGE, price=p, quantity_mw=5.0) for p in (50, 150)]
     charge = [Tranche(side=Side.CHARGE, price=p, quantity_mw=5.0) for p in (300, 120)]
-    d, c = price_take_beyond_band(discharge, charge, low=100.0, high=200.0, floor=-4500, cap=4500)
+    # one side only: floor / cap (sure to clear)
+    d, _ = price_take_beyond_band(discharge, [], low=100.0, high=200.0, floor=-4500, cap=4500)
     assert [t.price for t in d] == [-4500, 150]  # 50 < every plausible price: sell for sure
+    _, c = price_take_beyond_band([], charge, low=100.0, high=200.0, floor=-4500, cap=4500)
     assert [t.price for t in c] == [4500, 120]  # 300 > every plausible price: buy for sure
+    # both sides of a rising curve: price-taking stops at the other side's prices
+    low_charge = [Tranche(side=Side.CHARGE, price=40.0, quantity_mw=5.0)]
+    d, c = price_take_beyond_band(
+        discharge, low_charge, low=100.0, high=200.0, floor=-4500, cap=4500
+    )
+    assert [t.price for t in d] == pytest.approx([40.01, 150])
+    assert max(t.price for t in c) < min(t.price for t in d)
+
+
+def test_isotonic_net_is_the_closest_rising_curve() -> None:
+    """A non-monotone optimal response (charge at a higher price than a discharge, possible
+    with Markov prices) becomes the closest non-decreasing net MW curve (least squares)."""
+    from battery_optimisation.bidding.water_value import rising
+
+    net = np.array([-50.0, 20.0, -40.0, 0.0, 30.0, 30.0])
+    fit = rising(net)
+    assert np.all(np.diff(fit) >= -1e-12)
+    assert fit.tolist() == pytest.approx([-50.0, -10.0, -10.0, 0.0, 30.0, 30.0])
+    assert rising(np.array([-1.0, 0.0, 2.0])).tolist() == [-1.0, 0.0, 2.0]  # already rising
+
+
+def test_price_taking_keeps_charge_bids_below_discharge_offers() -> None:
+    """Ch. 6 5.2B.2.4: one offer in increasing price order. A charge bid made price-taking
+    (cap) above a discharge offer is clipped just below it: same clearing within the band."""
+    from battery_optimisation.bidding.water_value import price_take_beyond_band
+    from battery_optimisation.sim.clearing import Tranche
+
+    discharge = [Tranche(side=Side.DISCHARGE, price=400.0, quantity_mw=20.0)]
+    charge = [Tranche(side=Side.CHARGE, price=320.0, quantity_mw=30.0)]
+    d, c = price_take_beyond_band(discharge, charge, low=100.0, high=300.0, floor=-4500, cap=4500)
+    assert d[0].price == 400.0
+    assert c[0].price == pytest.approx(399.99)
+    assert max(t.price for t in c) < min(t.price for t in d)
