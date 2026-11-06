@@ -261,16 +261,19 @@ class ScenarioStats(BaseModel):
     period_start: date
     calibration_issues: int
     copula_lag1: float  # mean correlation of normal scores between consecutive intervals
-    realised_lag1: float  # same, measured on the month's own PITs (out of sample)
+    realised_lag1: float | None  # same, measured on the month's own PITs (out of sample);
+    # None: too few issues (e.g. a test window starting at the end of a month)
 
 
-def lag1(u: np.ndarray) -> float:
-    """Mean correlation between normal scores of consecutive steps, across rows."""
+def lag1(u: np.ndarray) -> float | None:
+    """Mean correlation between normal scores of consecutive steps, across rows.
+
+    None when undefined (fewer than 3 complete rows), not NaN: NaN does not survive JSON."""
     from scipy.special import ndtri
 
     u = u[~np.isnan(u).any(axis=1)]
     if u.shape[0] < 3:
-        return float("nan")
+        return None
     z = ndtri(u)
     return float(
         np.nanmean([np.corrcoef(z[:, t], z[:, t + 1])[0, 1] for t in range(z.shape[1] - 1)])

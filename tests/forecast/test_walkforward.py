@@ -128,6 +128,20 @@ def test_months_without_spikes_round_trip_through_json() -> None:
     assert again == stats
 
 
+def test_months_with_too_few_issues_round_trip_through_json() -> None:
+    # a test window starting on the 30th: the first month holds 2 issues
+    u = np.full((2, 48), 0.5)
+    stats = walkforward.ScenarioStats(
+        period_start=date(2025, 10, 30),
+        calibration_issues=90,
+        copula_lag1=0.85,
+        realised_lag1=walkforward.lag1(u),
+    )
+    assert stats.realised_lag1 is None  # undefined, not NaN
+    again = walkforward.ScenarioStats.model_validate_json(stats.model_dump_json())
+    assert again == stats
+
+
 def test_intraday_issues_at_every_gate_closure() -> None:
     issues = walkforward.issue_times(date(2026, 1, 1), date(2026, 1, 1), CFG)  # every interval
     assert len(issues) == 48
