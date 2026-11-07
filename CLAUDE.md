@@ -176,6 +176,18 @@ clearing simulator on held-out data.
      0.71-0.77; vs energy 0.19-0.38, ignored: chains independent). Reserves are still offered at
      0, chosen at gate closure in expectation over the reserve state (`_choose_reserves`); the
      offer curve's continuation is averaged over it. `point` (median or mean) = the baseline.
+     `reserve_offers` (fixed | curve; planner `sdp`, feasibility `market`): `fixed` offers the mix
+     chosen at the expected prices at 0 SGD/MW/h (always clears). `curve` (`bidding/ancillary.py`)
+     keeps that mix at 0 and adds, per product, the MW the same gate-closure choice would hold if
+     that product's price were higher (sweep of its price, others at their expected value, over
+     every valid mix at the reference SoC), each step priced at its opportunity cost (energy
+     value displaced, SoC headroom), <= 5 pairs per product. The energy curve keeps room for the
+     planned mix; extra reserves that clear are settled against energy by the engine (surplus,
+     RC386). Year: point reserve prices 34.22 -> 34.62 M (+0.40 M, every month up, mostly Sep-Oct
+     spikes), reserve states 34.53 -> **34.77 M** (+0.24 M; uplift vs self-schedule 1.35 M,
+     +4.0%). Pricing the whole curve instead (planned mix included) lost 0.27 / 0.84 M: below the
+     expected price reserves stopped clearing while the energy curve kept their room empty.
+     Parallel `limited` runs started together get the same CPUs: stagger them.
      numba kernels (`optim/kernels.py`, joint path and plan mixes only, threads capped to the
      process affinity): 223 -> 58 ms per issue (~17 min per year for the water value).
      Behaviour (12 months, sdp planner, median reserves): the +0.80 M uplift is all Sep-Oct 2026
@@ -287,15 +299,11 @@ data/         # raw/ and processed/ (git-ignored)
 5. Forecast upgrades (tail model, fine-tuning), kept only if capture rate improves.
 
 ## Important TODOs
-- **Priced reserve offers (closed loop in the reserve price).** Reserves are offered at 0 SGD/MW/h
-  (always clear, paid the clearing price) with the MW fixed by the SDP at gate closure from the
-  *expected* reserve price: the hold cannot react to the interval's actual reserve price (30 MW
-  committed for an expected 15 still held if it clears at 2). Offer a rising curve per product
-  instead, priced at the opportunity cost: energy margin given up (power used) + value of the
-  SoC headroom held (water value over the RC386 band) + expected activation cost; built like the
-  energy curve (sweep the reserve price, MW the SDP would hold). Check first how the NEMS
-  co-optimisation treats a storage unit's energy vs reserve curves (the simulator does not model
-  that interaction in detail) before trusting the gain.
+- **Priced reserve offers: done as an option** (`reserve_offers: curve`, branch
+  `reserves/priced-offers`; +0.24 to +0.40 M over the year). Still to do: check how the NEMS
+  co-optimisation treats a storage unit's energy vs reserve curves (our engine settles conflicts
+  by surplus per MW); then decide the default (`curve` with `reserve_prices: markov` is best).
+  The upside MW come from price spikes, so realistic award caps / price impact matter even more.
 - Realistic reserve award caps / price impact (`max_award_mw` = 100 each overstates revenue).
 
 ## Open questions (check challenge rules before assuming)

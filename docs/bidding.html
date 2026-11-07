@@ -228,7 +228,15 @@ svg text { fill: var(--muted); font-family: var(--mono); font-size: 11px; }
   <li><b>Energy curve restricted</b> to actions compatible with the chosen reserves (RC383 power groups, RC386 SoC checks).</li>
   <li><b>Regulation energy</b> (AGC, 5% up / 5% down of the MW) is settled at USEP and moves the SoC.</li>
 </ul>
-<div class="warn"><p><b>Important TODO: priced reserve offers.</b> A rising curve per product, priced at its opportunity cost: energy margin given up + value of the SoC headroom held (water value over the RC386 band) + expected activation cost. It would be built like the energy curve, by sweeping the reserve price. First check how the NEMS co-optimisation treats a storage unit's energy and reserve curves together.</p></div>
+<h3>Priced reserve curves (<code>reserve_offers: curve</code>)</h3>
+<p>Offering a fixed MW at 0 can't react to the interval's actual reserve price. The curve mode keeps the planned mix at 0 and adds, per product, the MW the same gate-closure choice would hold if that product's price were higher. Write \(G(x)\) for the value of a reserve mix \(x\): the expected energy value that still fits beside it, plus its reserve pay. Sweeping product \(p\)'s price \(\pi\) with the others at their expected value:</p>
+<div class="eq">\[ q_p(\pi) = x^\star_p(\pi), \qquad x^\star(\pi) = \arg\max_{x \text{ valid at } s}\ \underbrace{\mathbb E_k\big[\max_{a \text{ beside } x} \text{energy}_k(a)\big]}_{\text{base}(x)} + \sum_{q \ne p} v_q x_q + (\pi\,\Delta + e_p)\, x_p. \]</div>
+<p>\(q_p\) rises with \(\pi\). Each step sits at the price where holding those MW starts to pay for the energy value they displace and the SoC headroom they take: their opportunity cost.</p>
+<ul>
+  <li><b>The planned mix stays at 0.</b> The energy curve keeps room for it, so those MW cost nothing more to hold. Pricing them too lost 0.27–0.84 M over the year: below the expected price they stopped clearing, while their energy room stayed empty.</li>
+  <li><b>Only the upside is priced,</b> in at most 4 more pairs per product. If it clears, the engine settles it against energy and the SoC by surplus.</li>
+  <li><b>Results (year):</b> point reserve prices 34.22 → 34.62 M, and every month gains; reserve price states 34.53 → <b>34.77 M</b>. Most of the gain comes from the September–October price spikes.</li>
+</ul>
 
 <h2 id="shapes">§6 What the curves look like</h2>
 <p>Raw curves (before compression), energy only, ρ = 0.8, for real forecast issues of the backtest year. “price→MW” is the cumulative MW offered up to that price.</p>
@@ -256,7 +264,9 @@ svg text { fill: var(--muted); font-family: var(--mono); font-size: 11px; }
   <thead><tr><th>Strategy</th><th>Energy only</th><th>Energy + reserves</th></tr></thead>
   <tbody class="num">
     <tr><td>Perfect foresight</td><td>16.65 M</td><td>42.66 M</td></tr>
-    <tr><td>Water value, reserve price states</td><td>–</td><td><b>34.53 M</b></td></tr>
+    <tr><td>Water value, reserve price states + priced reserve curves</td><td>–</td><td><b>34.77 M</b></td></tr>
+    <tr><td>Water value, point reserve prices + priced reserve curves</td><td>–</td><td>34.62 M</td></tr>
+    <tr><td>Water value, reserve price states (reserves at 0)</td><td>–</td><td>34.53 M</td></tr>
     <tr><td>Water value, mean / median reserve prices</td><td>–</td><td>34.49 / 34.22 M</td></tr>
     <tr><td>Water value (Markov prices)</td><td><b>9.42 M</b></td><td>–</td></tr>
     <tr><td>Self-schedule (MILP plan at floor/cap)</td><td>5.99 M</td><td>33.42 M</td></tr>
@@ -268,7 +278,7 @@ svg text { fill: var(--muted); font-family: var(--mono); font-size: 11px; }
 <h2 id="gaps">§8 Gaps and next steps</h2>
 <ol class="steps">
   <li><b>Hackathon parameters:</b> SoC 5–95 MWh; score is net market revenue, so test κ = 0 in the objective.</li>
-  <li><b>Priced reserve offers</b> (§5).</li>
+  <li><b>Priced reserve offers:</b> done as an option (§5). Still to check: how the NEMS engine co-optimises a storage unit's energy and reserve curves; then choose the default.</li>
   <li><b>Curves against the SoC distribution:</b> choose the curve for t that maximises expected value over the SoC distribution at t (the SDP already gives it), instead of building it at the expected SoC.</li>
   <li><b>Curves for every later period:</b> standing offers and fallbacks if EMA calls the algorithm less often; refine them by rolling the SoC distribution forward with the chosen curves until they stop changing. If offers really are fixed once a day, optimise all curves jointly over trajectories (an LP; Fleten &amp; Kristoffersen).</li>
   <li><b>Two pending intervals:</b> optimise the curves for t and t + 1 jointly.</li>
