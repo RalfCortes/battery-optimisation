@@ -19,7 +19,7 @@ import numpy as np
 import polars as pl
 
 from battery_optimisation.battery import TOL, Battery
-from battery_optimisation.bidding.ancillary import curve_tranches, reserve_curve
+from battery_optimisation.bidding.ancillary import reserve_curve, upside_tranches
 from battery_optimisation.bidding.compress import compress
 from battery_optimisation.bidding.feasibility import (
     caps_from_bounds,
@@ -656,8 +656,9 @@ class WaterValueStrategy:
         """``reserve_offers: curve``: for each product, the MW the gate-closure choice would hold
         at each of its prices (the others at their expected value), over every valid reserve mix
         at ``soc`` (corners for each energy action); each step priced at its opportunity cost
-        (``bidding.ancillary``). Returns the mix chosen at the expected prices (the plan, and
-        what the energy curve keeps room for), the tranches, and that mix as an array."""
+        (``bidding.ancillary``). The mix chosen at the expected prices is offered at 0 (the
+        energy curve keeps room for it, as with fixed offers); only the MW beyond it are priced.
+        Returns that mix (the plan), the tranches, and the mix as an array."""
         rs, dt, m = self._reserves, self.market.interval_h, self.market
         value = self._expected_reserve_value(vf, issue, t)
         o = self._energy_options(vf, t, soc)
@@ -684,7 +685,7 @@ class WaterValueStrategy:
         for i, p in enumerate(rs.products):
             grid = np.linspace(0.0, 3.0 * max(highest[i], 1.0), self.RESERVE_GRID_POINTS)
             mw = reserve_curve(mixes, base, value, extra, i, grid, dt)
-            tranches += curve_tranches(grid, mw, p, m.n_tranches)
+            tranches += upside_tranches(grid, mw, float(chosen[i]), p, m.n_tranches)
         awards = dict(zip(rs.products, map(float, chosen), strict=True))
         return awards, tuple(t for t in tranches if t.product in m.ancillary_products), chosen
 

@@ -20,10 +20,13 @@ the price where holding those MW starts to pay for the energy value they displac
 headroom they take: the opportunity cost. Each step becomes one tranche (price, MW), and the
 curve is compressed to the offer format's K pairs per product.
 
-The energy curve keeps room for the mix chosen at the expected prices (what usually clears);
-reserves that clear beyond it are settled against energy and the SoC by the market engine
-(surplus, RC386). On real weeks this beat both room for the certain part only (MW held at
-price 0) and room for the whole curve (``WaterValueStrategy._reserve_curves``).
+The energy curve keeps room for the mix chosen at the expected prices; reserves that clear
+beyond it are settled against energy and the SoC by the market engine (surplus, RC386). That
+mix therefore costs nothing more to hold: it is offered at 0, as fixed offers are, and only the
+MW beyond it are priced (``upside_tranches``). Pricing the whole curve lost 0.27 M SGD over
+the year (point reserve prices): below the expected price the reserves did not clear, yet the
+energy curve had kept their room. Room for the certain part only, or for the whole curve, did
+worse on real weeks (``WaterValueStrategy._reserve_curves``).
 """
 
 from __future__ import annotations
@@ -71,3 +74,16 @@ def curve_tranches(
         if q > TOL
     ]
     return compress(tranches, k)
+
+
+def upside_tranches(
+    grid: np.ndarray, mw: np.ndarray, held: float, product: Product, k: int
+) -> list[AncillaryTranche]:
+    """The planned ``held`` MW at price 0 (the energy curve keeps room for them, so they cost
+    nothing more to hold and always clear), then the rest of the rising curve ``mw`` beyond
+    ``held``, priced at its opportunity cost (at most ``k`` pairs in all)."""
+    if held <= TOL:
+        return curve_tranches(grid, mw, product, k)
+    base = AncillaryTranche(product=product, price=0.0, quantity_mw=float(held))
+    extra = np.maximum(np.asarray(mw, float) - held, 0.0)
+    return [base, *curve_tranches(grid, extra, product, k - 1)]

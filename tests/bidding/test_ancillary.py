@@ -4,7 +4,11 @@ one product (others at their expected value), priced at the opportunity cost of 
 import numpy as np
 import pytest
 
-from battery_optimisation.bidding.ancillary import curve_tranches, reserve_curve
+from battery_optimisation.bidding.ancillary import (
+    curve_tranches,
+    reserve_curve,
+    upside_tranches,
+)
 from battery_optimisation.config import Product
 
 DT = 0.5
@@ -60,3 +64,29 @@ def test_curve_tranches_compress_to_k_and_keep_the_total() -> None:
     assert sum(t.quantity_mw for t in tranches) == pytest.approx(60.0)
     prices = [t.price for t in tranches]
     assert prices == sorted(prices)
+
+
+def test_upside_offers_the_planned_mix_at_zero_and_prices_only_the_rest() -> None:
+    """The energy curve keeps room for the planned mix, so those MW cost nothing more to hold:
+    offered at 0 (they always clear, as fixed offers). Only the MW beyond it, which would
+    displace energy, are priced at their opportunity cost."""
+    mw = reserve_curve(X, BASE, VALUE, np.zeros(2), 0, GRID, DT)  # 20 MW from 4, 50 from 11
+    tranches = upside_tranches(GRID, mw, held=20.0, product=Product.REGULATION, k=5)
+    assert [t.price for t in tranches] == pytest.approx([0.0, 11.0])
+    assert [t.quantity_mw for t in tranches] == pytest.approx([20.0, 30.0])
+
+
+def test_upside_without_a_planned_mix_is_the_plain_curve() -> None:
+    mw = reserve_curve(X, BASE, VALUE, np.zeros(2), 0, GRID, DT)
+    plain = curve_tranches(GRID, mw, Product.REGULATION, k=5)
+    assert upside_tranches(GRID, mw, held=0.0, product=Product.REGULATION, k=5) == plain
+
+
+def test_upside_keeps_k_pairs_and_the_total() -> None:
+    grid = np.linspace(0.0, 50.0, 51)
+    mw = np.minimum(np.floor(grid / 2.0) * 3.0, 60.0)
+    tranches = upside_tranches(grid, mw, held=10.0, product=Product.PRIMARY_RESERVE, k=5)
+    assert len(tranches) <= 5
+    assert tranches[0].price == 0.0 and tranches[0].quantity_mw == pytest.approx(10.0)
+    assert sum(t.quantity_mw for t in tranches) == pytest.approx(60.0)
+    assert [t.price for t in tranches] == sorted(t.price for t in tranches)
