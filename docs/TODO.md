@@ -33,7 +33,8 @@ Last updated: 2026-11-07. Target: EMA BESS Bidding Algorithm Hackathon. Registra
    - whether the actual SoC is passed back to it;
    - whether the simulator applies RC386 SoC cuts;
    - what "net market revenue" includes (regulation charges, degradation);
-   - whether reserve awards are capped.
+   - whether reserve awards are capped;
+   - whether the datasets include the delayed offer stack, reserve/regulation requirements, or AGC utilisation.
 3. **Pre-dispatch covariate** as soon as the datasets arrive (EMA provides pre-dispatch information).
 4. **Submission packaging.** A single entry point that EMA can run to reproduce the outputs, a dependency list, the algorithm description, and a list of external data sources with licences. Open-Meteo's free API is non-commercial: check its terms or use ECMWF open data. Also check Chronos-2 weights and GPU availability.
 5. **Offers for every period.** Produce curves for all future periods (standing offers and fallbacks), not only the next gate closure. If EMA calls once a day, optimise all curves jointly over trajectories.
@@ -48,6 +49,28 @@ Last updated: 2026-11-07. Target: EMA BESS Bidding Algorithm Hackathon. Registra
 - **Realistic reserve caps or price impact.** Today's figures overstate reserve revenue.
 - **Regulation near full SoC.** The water value holds 16–17 MW against 30 for the self-schedule. Check whether the cause is the firm-reserve rule or the C4 charge check.
 - **Forecast calibration.** The 10–90% band covers 77% instead of 80% (adaptive conformal inference). Check the partial autocorrelation of the errors (is the Markov assumption enough?).
+
+## Data to get (market structure)
+
+EMC data subscription (https://www.home.emcsg.com/services/nems-services/data-subscription; prices incl. GST, as published):
+
+- **Delayed offer stack** (Package A, or Package D "Offer Data" for history at S$2,180 per year):
+  - every effective energy, reserve and regulation offer per half-hour period, summed to total MW at each unique price;
+  - published D + 28; 16 months online; reserves and regulation from 1 Jul 2019;
+  - aggregated, so no unit identity: no price-setter names, but the marginal price level and the supply curve are there.
+- **Reserve and regulation requirements, shortfalls, risk adjustment factors, scheduled generation by type** (Package A real-time, 16 months; Package D history from 2003). Forecast schedules (PDS/STS/MOS) are kept 7 days only, so they would have to be archived.
+- **Advisory notices** (Package B): energy, reserve and regulation shortfalls, abnormal conditions. These are spike signals.
+- Package A is S$1,035.50 per month for 12 months. Ask EMA first whether the hackathon datasets include any of this.
+
+What it would give us:
+1. **Residual supply curves:** price as a function of demand (energy) or requirement (reserves). Their slope at the clearing point is the price impact of our MW. That gives realistic reserve awards and prices for a 100 MW battery against the 108 MW regulation requirement, the biggest overstatement today.
+2. **A less primitive simulator:** insert our offers into the stack and clear against demand or requirement, so prices react to us instead of being taken as given.
+3. **A structural price model:** price = stack⁻¹(demand + reserve needs), with typical stacks by season and hour (stacks change slowly) and forecast demand. It would complement Chronos for spikes. The 28-day delay rules out using live stacks as covariates.
+4. **Spike features:** requirements, shortfall advisories and offered headroom (capacity offered minus demand).
+
+Not available anywhere public: unit-level price setters, and regulation (AGC) utilisation data. AGC energy is settled as ordinary metered energy (MEP for injections, USEP for withdrawals); we assume 5% up and 5% down. Ask EMA or PSO.
+
+Already archived ourselves: pre-dispatch energy (USEP, demand, solar, TCL, EHEUR, LCP) and ancillary prices (forecast, plus uncapped reference prices on realised rows). No requirements or offers.
 
 ## Later
 

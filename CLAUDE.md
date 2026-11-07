@@ -304,7 +304,10 @@ data/         # raw/ and processed/ (git-ignored)
   co-optimisation treats a storage unit's energy vs reserve curves (our engine settles conflicts
   by surplus per MW); then decide the default (`curve` with `reserve_prices: markov` is best).
   The upside MW come from price spikes, so realistic award caps / price impact matter even more.
-- Realistic reserve award caps / price impact (`max_award_mw` = 100 each overstates revenue).
+- Realistic reserve award caps / price impact (`max_award_mw` = 100 each overstates revenue). Data:
+  EMC's delayed offer stack (energy, reserve, regulation offers summed per price, D+28, Package
+  A/D) gives residual supply curves, hence price impact and a stack-based clearing simulator;
+  requirements and shortfalls are in Package A/D. See docs/TODO.md "Data to get".
 
 ## Open questions (check challenge rules before assuming)
 - What is scored: offers through a simulator, or a schedule? Test period?
